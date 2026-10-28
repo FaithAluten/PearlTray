@@ -1,116 +1,76 @@
-# SafeTrade ticker on Debian
+# PearlTray
 
-Windows 托盘程序位于 `windows-tray/`，直接通过系统 `curl.exe` 获取 SafeTrade
-公开行情，无需价格 URL、API Token 或下述 Debian 中转服务。
-双击 `windows-tray/dist/PearlTray.exe` 即可运行；
-免安装包为 `windows-tray/PearlTray-windows.zip`。
-详细说明见 `windows-tray/README.md`。
+轻量的 Windows 托盘监控工具，在任务栏直接显示 PEARL 价格，支持人民币换算、矿机算力查询和低算力告警。
 
-A persistent Chromium browser reads the public `pearlusdt` ticker. A small HTTP
-service returns its latest successful JSON response. No browser is launched for
-each API request. The browser runs with a virtual display by default.
+## 功能
 
-Local browser success does not establish that a VPS IP will be accepted.
-Cloudflare may still block this browser. This service does not solve CAPTCHAs.
-A failed refresh is reported in `/status`; data older than 180 seconds is
-unavailable with HTTP 503.
+- **实时价格**：直接读取 SafeTrade 的 PEARL/USDT 公开行情，无需 API Token 或中转服务。
+- **显示设置**：支持 USDT / 人民币切换，以及 0、1、2 位小数。
+- **矿机监控**：填写钱包地址后，可查看在线矿机、显卡型号及算力。
+- **算力告警**：总算力低于设定阈值时，发送 Windows 通知或 Webhook。
+- **主题适配**：菜单和设置窗口跟随 Windows 应用深浅主题。
+- **免安装运行**：配置文件与 exe 放在同一目录。
 
-## Deploy
+## 下载与运行
 
-Requires a Debian VPS with Docker Engine and the Docker Compose plugin.
-If Docker is missing, use the official Debian installation instructions:
-https://docs.docker.com/engine/install/debian/
+从仓库的 **Releases** 页面下载 `PearlTray-windows.zip`，解压后运行 `PearlTray.exe`。
 
-Copy this project to `/opt/safetrade-ticker`, then run there:
-The external Docker network `reverse-network` must already exist, and Nginx
-Proxy Manager must also be connected to it. Create the network with
-`docker network create reverse-network` if it does not exist.
+需要 Windows 10 / 11 和 .NET Framework 4.8。
 
-```sh
-umask 077
-cp .env.example .env
-sed -i "s/^API_TOKEN=$/API_TOKEN=$(openssl rand -hex 32)/" .env
-docker compose up -d --build
-docker compose logs -f --tail=50 ticker
+首次运行会自动获取价格。若图标出现在任务栏折叠菜单中，可将其拖到常驻区域。
+
+## 使用方式
+
+| 操作 | 功能 |
+| --- | --- |
+| 左键点击托盘数字 | 在默认浏览器中打开 SafeTrade 交易页面 |
+| 右键点击托盘数字 | 查看矿机信息、刷新数据、修改设置或退出 |
+| 鼠标悬停 | 查看完整价格、刷新状态及最后成功更新时间 |
+
+默认每 **60 秒**刷新一次，最低支持 **5 秒**。刷新失败时保留上次价格，并以黄色提示；尚未获取到价格时显示 `--` 或 `!`。
+
+人民币价格根据 PEARL/USDT 行情和 USDT/CNY 参考汇率换算，支持自定义汇率接口。
+
+## 矿机与告警
+
+在设置中填写钱包地址，即可查询 PearlHash 在线矿机信息。钱包留空时关闭查询。
+
+“总算力阈值”的单位为 **TH/s**，默认 `0`，表示关闭告警。例如填写 `350`，全部在线矿机的显卡总算力低于 350 TH/s 时触发通知，等于阈值时不通知。
+
+持续低于阈值只通知一次；算力恢复后再次下降，会重新通知。接口请求失败时，不根据旧数据触发告警。
+
+支持同时开启：
+
+- **Windows 系统通知**：通过托盘通知显示。
+- **Webhook**：支持 GET / POST、自定义请求头、正文模板和可选的用户名、密码。
+
+Webhook 支持 `{{title}}` 和 `{{message}}` 占位符。POST 默认正文：
+
+```json
+{"message":"{{message}}","title":"{{title}}"}
 ```
 
-Allow about 60-90 seconds for the first attempt. Success logs contain
-`"event":"refreshed"`. Inspect readiness on the VPS:
+## 配置文件
 
-```sh
-docker compose exec -T ticker node -e "fetch('http://127.0.0.1:8787/healthz').then(async r => console.log(r.status, await r.text()))"
+保存设置后，程序会在 `PearlTray.exe` 所在目录创建 `settings.json`。移动程序时，请将配置文件一起移动。
+
+旧版配置可从 `%LOCALAPPDATA%\PearlTray\settings.json` 复制到 exe 所在目录继续使用。
+
+Webhook 密码通过 Windows DPAPI 按当前用户加密，换电脑或 Windows 用户后可能需要重新填写。配置中的 URL、请求头等信息请妥善保管。
+
+## 从源码构建
+
+在项目根目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\windows-tray\build.ps1 -Test
 ```
 
-To test the authenticated endpoint from inside the container:
+无需安装 NuGet 包或 Node.js。构建结果：
 
-```sh
-docker compose exec -T ticker node -e 'fetch("http://127.0.0.1:8787/ticker",{headers:{Authorization:"Bearer "+process.env.API_TOKEN}}).then(async r=>console.log(r.status,await r.text()))'
-```
+- 程序：`windows-tray/dist/PearlTray.exe`
+- 免安装包：`windows-tray/PearlTray-windows.zip`
 
-The original path `/api/v2/trade/public/tickers/pearlusdt` is also supported.
-Successful responses preserve the upstream JSON and include
-`X-Data-Updated-At`, `X-Data-Age-Seconds`, and `X-Upstream-State` headers.
-If the most recent refresh failed but the cached sample is still within
-`MAX_AGE_SECONDS`, the response remains HTTP 200 with
-`X-Upstream-State: refresh-failed`.
+## 致谢
 
-## Nginx Proxy Manager
-
-The service does not publish a host port. In Nginx Proxy Manager, create a
-Proxy Host with these settings:
-
-- Domain Names: your API domain
-- Scheme: `http`
-- Forward Hostname / IP: `safetrade-ticker`
-- Forward Port: `8787`
-- Cache Assets: disabled
-
-Point the domain to your VPS and configure its HTTPS certificate in Nginx
-Proxy Manager. Requests should include `Authorization: Bearer YOUR_API_TOKEN`:
-
-```sh
-curl -H "Authorization: Bearer YOUR_API_TOKEN" https://your-api-domain/ticker
-```
-
-Keep any existing networks of the Nginx Proxy Manager service, and add
-`reverse-network` to its Compose configuration as an external network.
-Its upstream is the Docker network alias `safetrade-ticker`, not `127.0.0.1`.
-The container still needs outbound internet connectivity to contact SafeTrade.
-
-## Operations
-
-```sh
-docker compose ps
-docker compose logs --tail=100 ticker
-docker compose restart ticker
-docker compose down
-```
-
-The `browser-data` volume persists cookies and browser storage across
-container restarts. Keep it private. Container restarts clear the in-memory
-ticker cache and return 503 until a new sample is collected.
-
-Polling defaults to 60 seconds, with a minimum of 15. Failures back off
-exponentially up to 5 minutes; there are no concurrent collection attempts.
-`BROWSER_TIMEOUT_SECONDS` limits each navigation and JSON wait.
-`MAX_AGE_SECONDS` controls the maximum accepted age of successful data.
-Set these in `.env` and run `docker compose up -d` to apply.
-If the maximum age is shorter than the polling interval, the API can
-temporarily return 503 between otherwise successful updates.
-
-If logs show HTTP 403 or a timeout, the VPS browser has not obtained a
-valid ticker. A virtual display does not guarantee acceptance. At that
-point, inspect access on that VPS and request an API access method from
-SafeTrade if its protection continues blocking automated access.
-
-## Local checks
-
-The HTTP and validation tests use only Node's built-in modules:
-
-```sh
-node --test
-```
-
-Run the actual browser locally with `npm ci`, a Chromium installation
-(`npx playwright install chromium`), `API_TOKEN`, `PROFILE_DIR`, and a display
-or `HEADLESS=true`. The production Docker image already includes Chromium.
+菜单内嵌 JetBrains Mono 字体，相关许可与第三方声明见 `windows-tray/THIRD-PARTY-NOTICES.txt`。
