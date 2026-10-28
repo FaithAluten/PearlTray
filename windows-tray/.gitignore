@@ -1,5 +1,0 @@
-dist/
-dist-*/
-artifacts/
-*.zip
-settings.json

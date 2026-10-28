@@ -63,13 +63,13 @@ Webhook 密码通过 Windows DPAPI 按当前用户加密，换电脑或 Windows 
 在项目根目录执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\windows-tray\build.ps1 -Test
+powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test
 ```
 
 无需安装 NuGet 包或 Node.js。构建结果：
 
-- 程序：`windows-tray/dist/PearlTray.exe`
-- 免安装包：`windows-tray/PearlTray-windows.zip`
+- 程序：`dist/PearlTray.exe`
+- 免安装包：`PearlTray-windows.zip`
 
 ## 源码结构
 
@@ -77,12 +77,12 @@ powershell -ExecutionPolicy Bypass -File .\windows-tray\build.ps1 -Test
 
 | 路径 | 内容 |
 | --- | --- |
-| `windows-tray/` | 托盘程序、设置窗口、行情与矿机查询、通知 |
-| `windows-tray/tests/` | 自动化测试 |
-| `windows-tray/assets/` | 内嵌字体和字体许可 |
-| `windows-tray/tools/` | 构建时使用的图标生成工具 |
-| `windows-tray/build.ps1` | 编译、测试和打包脚本 |
+| 根目录 `*.cs` | 托盘程序、设置窗口、行情与矿机查询、通知 |
+| `tests/` | 自动化测试 |
+| `assets/` | 内嵌字体和字体许可 |
+| `tools/` | 构建时使用的图标生成工具 |
+| `build.ps1` | 编译、测试和打包脚本 |
 
 ## 致谢
 
-菜单内嵌 JetBrains Mono 字体，相关许可与第三方声明见 `windows-tray/THIRD-PARTY-NOTICES.txt`。
+菜单内嵌 JetBrains Mono 字体，相关许可与第三方声明见 `THIRD-PARTY-NOTICES.txt`。
