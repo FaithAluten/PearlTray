@@ -12,7 +12,7 @@ $references = @(
     "/r:System.Windows.Forms.dll", "/r:System.Net.Http.dll",
     "/r:System.Web.Extensions.dll", "/r:System.Security.dll"
 )
-$sources = @("Program.cs", "Settings.cs", "SettingsAppearance.cs", "SettingsForm.cs", "WebhookSettingsForm.cs", "HashrateMonitor.cs", "WebhookClient.cs", "TickerClient.cs", "ExchangeRateClient.cs", "AccountClient.cs", "NetworkClient.cs", "TrayIconRenderer.cs", "MetricMenuRenderer.cs", "AssemblyInfo.cs") |
+$sources = @("Program.cs", "Settings.cs", "SettingsAppearance.cs", "SettingsForm.cs", "WebhookSettingsForm.cs", "HashrateMonitor.cs", "WebhookClient.cs", "TickerClient.cs", "ExchangeRateClient.cs", "AccountClient.cs", "TrayIconRenderer.cs", "MetricMenuRenderer.cs", "AssemblyInfo.cs") |
     ForEach-Object { Join-Path $PSScriptRoot $_ }
 $iconTool = Join-Path $output "CreateIcon.exe"
 & $compiler /nologo /target:exe /optimize+ /warnaserror+ "/out:$iconTool" `

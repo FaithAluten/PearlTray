@@ -39,14 +39,6 @@ internal static class Tests
                     CancellationToken.None).GetAwaiter().GetResult().Last);
             return 0;
         }
-        if (args.Length == 1 && args[0] == "--live-network")
-        {
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-            using (var client = new NetworkClient())
-                Console.WriteLine("Network hashrate: " + NetworkClient.FormatHashrate(
-                    client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult()));
-            return 0;
-        }
         if (args.Length == 1 && args[0] == "--live-rate")
         {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
@@ -402,29 +394,6 @@ internal static class Tests
         Check("Browser target matches the requested market", delegate
         {
             Equal("https://safetrade.com/exchange/PEARL-USDT", TrayContext.ExchangeUrl);
-        });
-        Check("Network uses HeroMiners network field without ticker credentials", delegate
-        {
-            using (var client = new NetworkClient(new FakeHandler(delegate(HttpRequestMessage message,
-                CancellationToken cancellation)
-            {
-                Equal("https://pearl.herominers.com/api/stats", message.RequestUri.AbsoluteUri);
-                Equal(null, message.Headers.Authorization);
-                return Task.FromResult(Response(HttpStatusCode.OK,
-                    "{\"network\":{\"networkHashps\":71408960020907940000},\"pool\":{\"hashrate\":123}}"));
-            })))
-            {
-                decimal result = client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
-                Equal(71408960020907940000m, result);
-                Equal("71.41 EH/s", NetworkClient.FormatHashrate(result));
-            }
-        });
-        Check("Network rejects missing and invalid hashrates", delegate
-        {
-            foreach (string json in new[] { "null", "not json", "{}", "{\"network\":null}",
-                "{\"network\":{\"networkHashps\":true}}", "{\"network\":{\"networkHashps\":-1}}",
-                "{\"network\":{\"networkHashps\":\"71.41\"}}" })
-                Throws<InvalidDataException>(delegate { NetworkClient.Parse(json); });
         });
         Check("Parses direct USDT/CNY quote", delegate
         {

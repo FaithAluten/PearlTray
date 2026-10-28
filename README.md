@@ -71,6 +71,18 @@ powershell -ExecutionPolicy Bypass -File .\windows-tray\build.ps1 -Test
 - 程序：`windows-tray/dist/PearlTray.exe`
 - 免安装包：`windows-tray/PearlTray-windows.zip`
 
+## 源码结构
+
+仓库以当前 Windows 托盘版为准，无需部署服务端。
+
+| 路径 | 内容 |
+| --- | --- |
+| `windows-tray/` | 托盘程序、设置窗口、行情与矿机查询、通知 |
+| `windows-tray/tests/` | 自动化测试 |
+| `windows-tray/assets/` | 内嵌字体和字体许可 |
+| `windows-tray/tools/` | 构建时使用的图标生成工具 |
+| `windows-tray/build.ps1` | 编译、测试和打包脚本 |
+
 ## 致谢
 
 菜单内嵌 JetBrains Mono 字体，相关许可与第三方声明见 `windows-tray/THIRD-PARTY-NOTICES.txt`。
