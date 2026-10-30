@@ -52,8 +52,13 @@ namespace PearlTray
         private readonly TickerClient client;
         private readonly ExchangeRateClient exchangeRates;
         private readonly AccountClient accounts;
+        private readonly WalletClient walletClient;
+        private decimal? walletBalance;
+        private string walletStatus = "";
         private readonly WebhookClient webhooks;
         private HashrateMonitor hashrateMonitor = new HashrateMonitor();
+        private WalletMonitor walletMonitor = new WalletMonitor();
+        private string walletNotificationStatus = "";
         private string notificationStatus = "";
         private readonly List<ToolStripItem> workerItems = new List<ToolStripItem>();
         private List<AccountWorker> workers;
@@ -105,11 +110,16 @@ namespace PearlTray
 
         public TrayContext(SettingsStore store, ExchangeRateClient exchangeRates, AccountClient accounts,
             WebhookClient webhooks, TickerClient client)
+            : this(store, exchangeRates, accounts, webhooks, client, new WalletClient()) { }
+
+        public TrayContext(SettingsStore store, ExchangeRateClient exchangeRates, AccountClient accounts,
+            WebhookClient webhooks, TickerClient client, WalletClient walletClient)
         {
             this.store = store;
             this.client = client;
             this.exchangeRates = exchangeRates;
             this.accounts = accounts;
+            this.walletClient = walletClient;
             this.webhooks = webhooks;
             // Capture a UI handle before scheduling startup and asynchronous continuations.
             dispatcher = new Control();
@@ -216,9 +226,15 @@ namespace PearlTray
             if (settings == null || settings.WalletAddress != value.WalletAddress ||
                 settings.HashrateThresholds != value.HashrateThresholds)
                 hashrateMonitor = new HashrateMonitor();
+            if (settings == null || settings.WalletAddress != value.WalletAddress ||
+                settings.WalletThreshold != value.WalletThreshold)
+                walletMonitor = new WalletMonitor();
             settings = value;
             notificationStatus = "";
+            walletNotificationStatus = "";
             workers = null;
+            walletBalance = null;
+            walletStatus = "";
             workerStatus = String.IsNullOrEmpty(settings.WalletAddress) ? "" : "正在获取矿机";
             lastPrice = null;
             lastUpdated = null;
@@ -309,7 +325,8 @@ namespace PearlTray
             try
             {
                 await Task.WhenAll(RefreshPriceAsync(snapshot, generation, active.Token),
-                    RefreshAccountAsync(snapshot, generation, active.Token));
+                    RefreshAccountAsync(snapshot, generation, active.Token),
+                    RefreshWalletAsync(snapshot, generation, active.Token));
             }
             finally
             {
@@ -322,6 +339,59 @@ namespace PearlTray
                 }
             }
             if (!exiting && generation == revision) await RefreshExchangeRateAsync();
+        }
+
+        private async Task RefreshWalletAsync(AppSettings snapshot, int generation, CancellationToken cancellation)
+        {
+            if (String.IsNullOrEmpty(snapshot.WalletAddress)) return;
+            try
+            {
+                decimal result = await walletClient.FetchAsync(snapshot.WalletAddress, cancellation);
+                if (exiting || generation != revision) return;
+                walletBalance = result;
+                walletStatus = "";
+            }
+            catch
+            {
+                if (exiting || generation != revision) return;
+                walletStatus = walletBalance.HasValue ? "余额刷新失败，显示上次数据" :
+                    "余额获取失败，将在下个周期重试";
+                if (!exiting && generation == revision) UpdateIcon();
+                return;
+            }
+            await NotifyWalletAsync(snapshot, generation, cancellation);
+            if (!exiting && generation == revision) UpdateIcon();
+        }
+
+        private async Task NotifyWalletAsync(AppSettings snapshot, int generation, CancellationToken cancellation)
+        {
+            walletNotificationStatus = "";
+            var monitor = walletMonitor;
+            string message = monitor.Evaluate(WalletMonitor.ParseThreshold(snapshot.WalletThreshold),
+                walletBalance.Value);
+            if (message == null) return;
+            if (snapshot.WindowsNotifications && monitor.NeedsNotification(false))
+            {
+                try
+                {
+                    tray.ShowBalloonTip(10000, WalletMonitor.Title, message, ToolTipIcon.Info);
+                    monitor.MarkSent(false);
+                }
+                catch { walletNotificationStatus = "钱包 Windows 系统通知发送失败"; }
+            }
+            if (!snapshot.WebhookNotifications || !monitor.NeedsNotification(true)) return;
+            if (exiting || generation != revision || cancellation.IsCancellationRequested) return;
+            try
+            {
+                await webhooks.SendAsync(snapshot.Webhook, WalletMonitor.Title, message, cancellation);
+                if (exiting || generation != revision) return;
+                monitor.MarkSent(true);
+            }
+            catch
+            {
+                if (exiting || generation != revision || cancellation.IsCancellationRequested) return;
+                walletNotificationStatus = "钱包 Webhook 通知失败，将在下个周期重试";
+            }
         }
 
         private async Task RefreshAccountAsync(AppSettings snapshot, int generation, CancellationToken cancellation)
@@ -367,7 +437,8 @@ namespace PearlTray
                 try
                 {
                     string message = String.Join("\n", windowsAlerts.ConvertAll(alert => alert.Message));
-                    tray.ShowBalloonTip(10000, "PearlTray 算力告警", message, ToolTipIcon.Warning);
+                    tray.ShowBalloonTip(10000, windowsAlerts[0].Title, message,
+                        windowsAlerts[0].IsRecovery ? ToolTipIcon.Info : ToolTipIcon.Warning);
                     monitor.MarkSent(false);
                 }
                 catch { notificationStatus = "Windows 系统通知发送失败"; }
@@ -379,7 +450,7 @@ namespace PearlTray
                 if (!monitor.NeedsNotification(true)) continue;
                 try
                 {
-                    await webhooks.SendAsync(snapshot.Webhook, "PearlTray 算力告警", alert.Message, cancellation);
+                    await webhooks.SendAsync(snapshot.Webhook, alert.Title, alert.Message, cancellation);
                     if (exiting || generation != revision) return;
                     monitor.MarkSent(true);
                 }
@@ -474,6 +545,14 @@ namespace PearlTray
             workerItems.Clear();
             int position = 0;
             var workerRows = new List<ToolStripItem>();
+            if (settings != null && !String.IsNullOrEmpty(settings.WalletAddress))
+            {
+                workerRows.Add(new MetricMenuItem("Pearl Wallet  ", walletBalance.HasValue ?
+                    WalletClient.FormatBalance(walletBalance.Value) : "--", " PRL")
+                    { ValueColor = Color.FromArgb(229, 188, 100) });
+                if (!String.IsNullOrEmpty(walletStatus))
+                    workerRows.Add(new ToolStripMenuItem(walletStatus) { Enabled = false, AutoToolTip = false });
+            }
             if (workers != null)
             {
                 foreach (var worker in workers)
@@ -489,6 +568,8 @@ namespace PearlTray
                 workerRows.Add(new ToolStripMenuItem(workerStatus) { Enabled = false, AutoToolTip = false });
             if (!String.IsNullOrEmpty(notificationStatus))
                 workerRows.Add(new ToolStripMenuItem(notificationStatus) { Enabled = false, AutoToolTip = false });
+            if (!String.IsNullOrEmpty(walletNotificationStatus))
+                workerRows.Add(new ToolStripMenuItem(walletNotificationStatus) { Enabled = false, AutoToolTip = false });
             if (settingsForm != null)
                 settingsForm.UpdateHashrates(workers, workerStatus);
             foreach (var item in workerRows)
@@ -567,6 +648,7 @@ namespace PearlTray
                 client.Dispose();
                 exchangeRates.Dispose();
                 accounts.Dispose();
+                walletClient.Dispose();
                 webhooks.Dispose();
                 dispatcher.Dispose();
             }

@@ -23,7 +23,7 @@ namespace PearlTray
     public sealed class TickerClient : IDisposable
     {
         public const string PublicTickerUrl =
-            "https://safetrade.com/api/v2/peatio/public/markets/pearlusdt/tickers";
+            "https://pool.kryptex.com/api/v1/coin/prl/price/chart?time_range=month";
         public const string BrowserUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -108,11 +108,11 @@ namespace PearlTray
 
         public static string ParseLast(string json)
         {
-            Dictionary<string, object> value;
+            object[] points;
             try
             {
-                value = new JavaScriptSerializer { MaxJsonLength = MaximumResponseBytes }
-                    .DeserializeObject(json.TrimStart('\uFEFF')) as Dictionary<string, object>;
+                points = new JavaScriptSerializer { MaxJsonLength = MaximumResponseBytes }
+                    .DeserializeObject(json.TrimStart('\uFEFF')) as object[];
             }
             catch (Exception error)
             {
@@ -120,13 +120,13 @@ namespace PearlTray
                 throw new InvalidDataException("接口未返回有效的 JSON。");
             }
             object raw;
-            object nested;
-            if (value != null && value.TryGetValue("ticker", out nested))
-                value = nested as Dictionary<string, object>;
-            if (value == null || !value.TryGetValue("last", out raw) || raw == null ||
+            // Match the price page: its default month chart displays the final point.
+            var value = points == null || points.Length == 0 ? null :
+                points[points.Length - 1] as Dictionary<string, object>;
+            if (value == null || !value.TryGetValue("price", out raw) || raw == null ||
                 (!(raw is string) && !(raw is decimal) && !(raw is double) &&
                  !(raw is int) && !(raw is long)))
-                throw new InvalidDataException("接口缺少有效的 last 数值。");
+                throw new InvalidDataException("接口缺少有效的 price 数值。");
             string text = Convert.ToString(raw, CultureInfo.InvariantCulture).Trim();
             decimal price;
             if (text.Length == 0 || text.Length > 28 ||
@@ -134,7 +134,7 @@ namespace PearlTray
                     NumberStyles.AllowLeadingSign | NumberStyles.AllowExponent,
                     CultureInfo.InvariantCulture, out price) || price < 0 ||
                 (price == 0 && HasNonzeroDigit(text)))
-                throw new InvalidDataException("接口中的 last 不是有效的非负价格。");
+                throw new InvalidDataException("接口中的 price 不是有效的非负价格。");
             return price.ToString("0.############################", CultureInfo.InvariantCulture);
         }
 

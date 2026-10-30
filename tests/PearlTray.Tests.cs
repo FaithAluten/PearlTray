@@ -35,7 +35,7 @@ internal static class Tests
         if (args.Length == 1 && args[0] == "--live-ticker")
         {
             using (var client = new TickerClient())
-                Console.WriteLine("PEARL/USDT: " + client.FetchAsync(new AppSettings(),
+                Console.WriteLine("Kryptex PRL/USD: " + client.FetchAsync(new AppSettings(),
                     CancellationToken.None).GetAwaiter().GetResult().Last);
             return 0;
         }
@@ -88,19 +88,18 @@ internal static class Tests
             ExportFontComparison(args[1]);
             return 0;
         }
-        Check("Reads last, not high", delegate
+        Check("Reads the final month chart price, not the first point", delegate
         {
             Equal("1.76", TickerClient.ParseLast(
-                "{\"id\":\"pearlusdt\",\"high\":\"1.93\",\"last\":\"1.76\"}"));
+                "[{\"timestamp\":1793350800000,\"price\":1.93}," +
+                "{\"timestamp\":1793354400000,\"price\":1.76}]"));
         });
-        Check("Accepts numeric JSON", delegate { Equal("1.93", TickerClient.ParseLast("{\"last\":1.93}")); });
-        Check("Reads public ticker.last instead of bid, ask or top-level last", delegate
+        Check("Accepts numeric JSON", delegate { Equal("1.93", TickerClient.ParseLast("[{\"price\":1.93}]")); });
+        Check("Does not substitute another price when the final chart point is invalid", delegate
         {
-            Equal("1.65", TickerClient.ParseLast(
-                "{\"at\":\"1793167251\",\"last\":\"99\",\"ticker\":{\"buy\":\"1.66\"," +
-                "\"sell\":\"1.64\",\"high\":\"1.79\",\"last\":\"1.65\"}}"));
-            foreach (string json in new[] { "{\"ticker\":null,\"last\":\"99\"}",
-                "{\"ticker\":[],\"last\":\"99\"}", "{\"ticker\":{\"high\":\"1.79\"}}" })
+            foreach (string json in new[] { "[{\"price\":1.76},null]",
+                "[{\"price\":1.76},{}]", "[{\"price\":1.76},{\"price\":-1}]",
+                "[{\"price\":1.76},[]]", "[{\"price\":1.76},3]" })
                 Throws<InvalidDataException>(delegate { TickerClient.ParseLast(json); });
         });
         Check("Default settings require no credentials", delegate { new AppSettings().Validate(); });
@@ -117,16 +116,17 @@ internal static class Tests
         });
         Check("Preserves meaningful precision", delegate
         {
-            Equal("0.00001234", TickerClient.ParseLast("{\"last\":\"0.0000123400\"}"));
+            Equal("0.00001234", TickerClient.ParseLast("[{\"price\":\"0.0000123400\"}]"));
         });
-        Check("Accepts zero", delegate { Equal("0", TickerClient.ParseLast("{\"last\":\"0\"}")); });
-        Check("Accepts a UTF-8 BOM", delegate { Equal("1.76", TickerClient.ParseLast("\uFEFF{\"last\":\"1.76\"}")); });
-        Check("Accepts exponent", delegate { Equal("0.0001", TickerClient.ParseLast("{\"last\":\"1e-4\"}")); });
+        Check("Accepts zero", delegate { Equal("0", TickerClient.ParseLast("[{\"price\":\"0\"}]")); });
+        Check("Accepts a UTF-8 BOM", delegate { Equal("1.76", TickerClient.ParseLast("\uFEFF[{\"price\":\"1.76\"}]")); });
+        Check("Accepts exponent", delegate { Equal("0.0001", TickerClient.ParseLast("[{\"price\":\"1e-4\"}]")); });
         string[] bad = {
-            "not json", "{\"high\":\"1.93\"}", "{\"last\":null}", "{\"last\":true}",
-            "{\"last\":{}}", "{\"last\":[]}", "{\"last\":\"NaN\"}", "{\"last\":\"-1\"}",
-            "{\"last\":\"1,234\"}", "{\"last\":\"1e-29\"}", "{\"last\":\"\"}",
-            "{\"last\":\"1.76\"}%"
+            "not json", "[]", "null", "{}", "{\"ticker\":{\"last\":\"1.76\"}}",
+            "[{\"high\":\"1.93\"}]", "[{\"price\":null}]", "[{\"price\":true}]",
+            "[{\"price\":{}}]", "[{\"price\":[]}]", "[{\"price\":\"NaN\"}]", "[{\"price\":\"-1\"}]",
+            "[{\"price\":\"1,234\"}]", "[{\"price\":\"1e-29\"}]", "[{\"price\":\"\"}]",
+            "[{\"price\":\"1.76\"}]%"
         };
         foreach (string input in bad)
         {
@@ -246,16 +246,16 @@ internal static class Tests
             Equal(1, store.Load().DecimalPlaces);
             File.Delete(path);
         });
-        Check("GET public ticker with browser UA and no authorization", delegate
+        Check("GET Kryptex month chart with browser UA and no authorization", delegate
         {
             var handler = new FakeHandler(delegate(HttpRequestMessage message, CancellationToken cancellation)
             {
                 Equal("GET", message.Method.Method);
                 Equal(null, message.Headers.Authorization);
                 Equal(TickerClient.BrowserUserAgent, message.Headers.UserAgent.ToString());
-                Equal("https://safetrade.com/api/v2/peatio/public/markets/pearlusdt/tickers",
+                Equal("https://pool.kryptex.com/api/v1/coin/prl/price/chart?time_range=month",
                     message.RequestUri.AbsoluteUri);
-                return Task.FromResult(Response(HttpStatusCode.OK, "{\"ticker\":{\"last\":\"1.76\"}}"));
+                return Task.FromResult(Response(HttpStatusCode.OK, "[{\"price\":1.93},{\"price\":1.76}]"));
             });
             using (var client = new TickerClient(handler))
             {
@@ -266,7 +266,7 @@ internal static class Tests
         });
         Check("Honors upstream stale-cache header", delegate
         {
-            var response = Response(HttpStatusCode.OK, "{\"last\":\"1.76\"}");
+            var response = Response(HttpStatusCode.OK, "[{\"price\":1.76}]");
             response.Headers.Add("X-Upstream-State", "refresh-failed");
             using (var client = new TickerClient(new FakeHandler(
                 delegate { return Task.FromResult(response); })))
@@ -308,7 +308,7 @@ internal static class Tests
                 HttpRequestMessage message, CancellationToken token)
             {
                 await Task.Delay(10000, token);
-                return Response(HttpStatusCode.OK, "{\"last\":\"1.76\"}");
+                return Response(HttpStatusCode.OK, "[{\"price\":1.76}]");
             })))
             {
                 cancellation.CancelAfter(50);
@@ -646,6 +646,75 @@ internal static class Tests
         });
         Check("Wallet refresh, failure, recovery, empty workers, settings changes", AccountLifecycle);
         Check("Old wallet responses cannot overwrite the new wallet", WalletChangeLifecycle);
+        Check("Wallet balance preserves eight decimals and rejects malformed atomic units", delegate
+        {
+            Equal(22.47260305m, WalletClient.Parse("{\"balance\":\"2247260305\"}"));
+            Equal(0.00000001m, WalletClient.Parse("{\"balance\":\"1\"}"));
+            Equal(0m, WalletClient.Parse("{\"balance\":0}"));
+            Equal("22.47", WalletClient.FormatBalance(22.47260305m));
+            Equal("1.24", WalletClient.FormatBalance(1.235m));
+            Equal("1.20", WalletClient.FormatBalance(1.2m));
+            Equal("0.00", WalletClient.FormatBalance(0m));
+            foreach (string json in new[] { "null", "[]", "{}", "bad", "{\"balance\":true}",
+                "{\"balance\":null}", "{\"balance\":\"-1\"}", "{\"balance\":\"1.5\"}",
+                "{\"balance\":\"1e8\"}", "{\"balance\":\"1,000\"}" })
+                Throws<InvalidDataException>(delegate { WalletClient.Parse(json); });
+        });
+        Check("Wallet URL, HTTP errors, body limits and cancellation", WalletRequests);
+        Check("Wallet balance refreshes independently, retains failures and resets on wallet change",
+            WalletBalanceLifecycle);
+        Check("Wallet threshold defaults off, validates and migrates older settings", delegate
+        {
+            Equal("0", new AppSettings().WalletThreshold);
+            Equal(0m, WalletMonitor.ParseThreshold("0"));
+            Equal(1.23456789m, WalletMonitor.ParseThreshold(" 1.23456789 "));
+            foreach (string value in new[] { "", "-1", "1,2", "NaN", "1e3" })
+            {
+                var invalid = ValidSettings();
+                invalid.WalletThreshold = value;
+                Throws<ArgumentException>(invalid.Validate);
+            }
+            string path = Path.Combine(Artifacts, "wallet-threshold-migration.json");
+            File.WriteAllText(path, "{\"RefreshSeconds\":60}");
+            var store = new SettingsStore(path);
+            Equal("0", store.Load().WalletThreshold);
+            var settings = store.Load();
+            settings.WalletThreshold = "123.456789";
+            store.Save(settings);
+            Equal("123.456789", store.Load().WalletThreshold);
+            File.Delete(path);
+        });
+        Check("Wallet threshold only notifies upward crossings, independently per channel", delegate
+        {
+            var monitor = new WalletMonitor();
+            Equal(null, monitor.Evaluate(10m, 12m));
+            Equal(null, monitor.Evaluate(10m, 10m));
+            Equal(null, monitor.Evaluate(10m, 9.99999999m));
+            Equal(true, monitor.Evaluate(10m, 10m).Contains("当前 10 PRL"));
+            Equal(true, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            monitor.MarkSent(false);
+            Equal(true, monitor.Evaluate(10m, 11m) != null);
+            Equal(false, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            monitor.MarkSent(true);
+            monitor.Evaluate(10m, 12m);
+            Equal(false, monitor.NeedsNotification(false));
+            Equal(false, monitor.NeedsNotification(true));
+            Equal(null, monitor.Evaluate(10m, 9m));
+            Equal(false, monitor.NeedsNotification(true));
+            monitor.Evaluate(10m, 10.00000001m);
+            Equal(true, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            Equal(null, monitor.Evaluate(0m, 11m));
+            Equal(null, monitor.Evaluate(10m, 11m));
+            monitor.Evaluate(10m, 9m);
+            monitor.Evaluate(10m, 10m);
+            Equal(null, monitor.Evaluate(10m, 8m));
+            Equal(false, monitor.NeedsNotification(true));
+        });
+        Check("Wallet notifications use successful balances, retry and reset on settings changes",
+            WalletNotificationLifecycle);
         Check("Tray lifecycle: fetch, periodic refresh, failure, recovery, exit", TrayLifecycle);
         Check("Currency menu: convert, persist, cache, fail, recover, switch back", CurrencyLifecycle);
         Check("Missing rate never displays USDT as CNY", MissingRateLifecycle);
@@ -703,7 +772,10 @@ internal static class Tests
             workers.Reverse();
             Equal(376.254083031764m, monitor.Evaluate(settings, workers)[0].Actual);
             workers[0].Gpus[0].Hashrate = 120000000000000m;
-            Equal(0, monitor.Evaluate(settings, workers).Count);
+            alerts = monitor.Evaluate(settings, workers);
+            Equal(1, alerts.Count);
+            Equal(true, alerts[0].IsRecovery);
+            Equal(true, alerts[0].Message.StartsWith("总算力恢复"));
             Equal(true, monitor.NeedsNotification(true));
             Equal(true, monitor.NeedsNotification(false));
             workers.RemoveAt(0);
@@ -717,6 +789,47 @@ internal static class Tests
             settings.HashrateThresholds = "0";
             Equal(0, monitor.Evaluate(settings, workers).Count);
             Equal(true, monitor.NeedsNotification(true));
+        });
+        Check("Recovery notifies each channel once, retries failures and rearms on another drop", delegate
+        {
+            var settings = ValidSettings();
+            settings.HashrateThresholds = "380";
+            var workers = AccountClient.Parse(AccountJson());
+            decimal normal = HashrateMonitor.Total(workers);
+            settings.HashrateThresholds = normal.ToString(CultureInfo.InvariantCulture);
+            var monitor = new HashrateMonitor();
+            Equal(0, monitor.Evaluate(settings, workers).Count);
+            decimal original = workers[0].Gpus[0].Hashrate;
+            workers[0].Gpus[0].Hashrate = 0m;
+            var alert = monitor.Evaluate(settings, workers)[0];
+            Equal(false, alert.IsRecovery);
+            Equal("PearlTray 算力告警", alert.Title);
+            monitor.MarkSent(false);
+            monitor.MarkSent(true);
+            workers[0].Gpus[0].Hashrate = original;
+            alert = monitor.Evaluate(settings, workers)[0];
+            Equal(true, alert.IsRecovery);
+            Equal(normal, alert.Actual);
+            Equal("PearlTray 算力恢复", alert.Title);
+            Equal(true, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            monitor.MarkSent(false);
+            Equal(true, monitor.Evaluate(settings, workers)[0].IsRecovery);
+            Equal(false, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            monitor.MarkSent(true);
+            monitor.Evaluate(settings, workers);
+            Equal(false, monitor.NeedsNotification(false));
+            Equal(false, monitor.NeedsNotification(true));
+            workers[0].Gpus[0].Hashrate = 0m;
+            Equal(false, monitor.Evaluate(settings, workers)[0].IsRecovery);
+            Equal(true, monitor.NeedsNotification(false));
+            Equal(true, monitor.NeedsNotification(true));
+            settings.HashrateThresholds = "0";
+            Equal(0, monitor.Evaluate(settings, workers).Count);
+            workers[0].Gpus[0].Hashrate = original;
+            settings.HashrateThresholds = normal.ToString(CultureInfo.InvariantCulture);
+            Equal(0, monitor.Evaluate(settings, workers).Count);
         });
         Check("Total threshold ignores worker count and names and compares unrounded totals", delegate
         {
@@ -860,6 +973,8 @@ internal static class Tests
                 Equal(true, Field<Label>(form, "totals").Text.Contains("376.25"));
                 Equal(true, Field<CheckBox>(form, "windowsNotifications").Checked);
                 Equal(false, Field<CheckBox>(form, "webhookNotifications").Checked);
+                Equal("0", Field<TextBox>(form, "walletThreshold").Text);
+                Field<TextBox>(form, "walletThreshold").Text = "100.12345678";
                 form.Show();
                 Application.DoEvents();
                 Equal(true, Field<Label>(form, "totals").Bounds.Height >= 20);
@@ -872,6 +987,7 @@ internal static class Tests
                 form.GetType().GetMethod("Save", BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(form, new object[] { null, EventArgs.Empty });
                 Equal("380", new SettingsStore(path).Load().HashrateThresholds);
+                Equal("100.12345678", new SettingsStore(path).Load().WalletThreshold);
             }
             using (var form = new WebhookSettingsForm(new WebhookSettings()))
             {
@@ -1187,11 +1303,13 @@ internal static class Tests
         bool accountFails = false;
         bool webhookFails = true;
         bool recovered = false;
+        string lastNotification = "";
         using (var server = new LocalTickerServer())
         {
             var settings = new AppSettings {
                 WalletAddress = "wallet", HashrateThresholds = "380", WindowsNotifications = false,
-                WebhookNotifications = true, Webhook = new WebhookSettings { Url = "https://notify.test/hook" } };
+                WebhookNotifications = true, Webhook = new WebhookSettings {
+                    Url = "https://notify.test/hook?title={{title}}&message={{message}}" } };
             var store = new SettingsStore(path);
             store.Save(settings);
             using (var context = new TrayContext(store, new ExchangeRateClient(),
@@ -1200,11 +1318,12 @@ internal static class Tests
                     return Task.FromResult(Response(accountFails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK,
                         recovered ? AccountJson().Replace("106038929456724", "120000000000000") : AccountJson()));
                 })),
-                new WebhookClient(new FakeHandler(delegate
+                new WebhookClient(new FakeHandler(delegate(HttpRequestMessage request, CancellationToken cancellation)
                 {
                     notifications++;
+                    lastNotification = Uri.UnescapeDataString(request.RequestUri.Query);
                     return Task.FromResult(Response(webhookFails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK, "{}"));
-                })), CreateTicker()))
+                })), CreateTicker(), TestWallet()))
             {
                 var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
                 PumpUntil(delegate { return notifications == 1 && refresh.Enabled; });
@@ -1223,12 +1342,29 @@ internal static class Tests
                 PumpUntil(delegate { return refresh.Enabled; });
                 Equal(2, notifications);
                 recovered = true;
+                accountFails = true;
                 refresh.PerformClick();
                 PumpUntil(delegate { return refresh.Enabled; });
-                recovered = false;
+                Equal(2, notifications);
+                accountFails = false;
+                webhookFails = true;
                 refresh.PerformClick();
                 PumpUntil(delegate { return refresh.Enabled; });
                 Equal(3, notifications);
+                Equal(true, lastNotification.Contains("title=PearlTray 算力恢复"));
+                Equal(true, lastNotification.Contains("message=总算力恢复"));
+                webhookFails = false;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(4, notifications);
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(4, notifications);
+                recovered = false;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(5, notifications);
+                Equal(true, lastNotification.Contains("title=PearlTray 算力告警"));
                 context.ExitThread();
             }
         }
@@ -1270,13 +1406,14 @@ internal static class Tests
                 var tray = Field<NotifyIcon>(context, "tray");
                 PumpUntil(delegate { return WorkerMenuText(context).Contains("164.18 TH/s") &&
                     Field<string>(context, "lastPrice") == "1.76" && refresh.Enabled; });
-                Equal("nj-01", menu.Items[0].Text);
-                Equal("nj-02", menu.Items[3].Text);
+                Equal("Pearl Wallet  22.47 PRL", menu.Items[0].Text);
+                Equal("nj-01", menu.Items[1].Text);
+                Equal("nj-02", menu.Items[4].Text);
                 Equal(true, menu.Renderer is MetricMenuRenderer);
                 foreach (ToolStripItem item in menu.Items)
                     if (item.Text.Contains("PRL/") || item.Text.Contains("全网算力"))
                         throw new Exception("Removed metrics are still visible.");
-                var gpuItem = (MetricMenuItem)menu.Items[1];
+                var gpuItem = (MetricMenuItem)menu.Items[2];
                 Equal("RTX 4070 Ti  164.18 TH/s", gpuItem.Text);
                 Equal("164.18", gpuItem.Text.Substring(gpuItem.ValueStart, gpuItem.ValueLength));
                 Equal(true, WorkerMenuText(context).Contains("nj-02"));
@@ -1458,20 +1595,29 @@ internal static class Tests
         {
             menu.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
             bitmap.Save(Path.Combine(Artifacts, "account-menu.png"), ImageFormat.Png);
-            foreach (int index in new[] { 1, 2, 4 })
+            int? valueRight = null;
+            foreach (int index in new[] { 0, 2, 3, 5 })
             {
                 Rectangle row = Rectangle.Intersect(menu.Items[index].Bounds,
                     new Rectangle(Point.Empty, bitmap.Size));
                 int accentPixels = 0;
+                int right = 0;
                 for (int y = row.Top; y < row.Bottom; y++)
                     for (int x = row.Left; x < row.Right; x++)
                     {
                         Color pixel = bitmap.GetPixel(x, y);
-                        if (pixel.G > pixel.R + 30 && pixel.R > pixel.B + 60)
+                        if (index == 0 ? pixel.R > pixel.G + 15 && pixel.G > pixel.B + 50 :
+                            pixel.G > pixel.R + 30 && pixel.R > pixel.B + 60)
+                        {
                             accentPixels++;
+                            right = Math.Max(right, x);
+                        }
                     }
                 if (accentPixels < 5)
                     throw new Exception("Metric row has no colored value: " + menu.Items[index].Text);
+                if (valueRight.HasValue && Math.Abs(valueRight.Value - right) > 2)
+                    throw new Exception("Wallet and hashrate numbers are not right aligned.");
+                valueRight = right;
             }
         }
         var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
@@ -1706,10 +1852,205 @@ internal static class Tests
     }
 
     private static TrayContext CreateContext(SettingsStore store, ExchangeRateClient rates = null,
-        AccountClient accounts = null)
+        AccountClient accounts = null, WalletClient wallet = null)
     {
         return new TrayContext(store, rates ?? new ExchangeRateClient(), accounts ?? new AccountClient(),
-            new WebhookClient(), CreateTicker());
+            new WebhookClient(), CreateTicker(), wallet ?? TestWallet());
+    }
+
+    private static WalletClient TestWallet()
+    {
+        return new WalletClient(new FakeHandler(delegate
+        {
+            return Task.FromResult(Response(HttpStatusCode.OK, "{\"balance\":\"2247260305\"}"));
+        }));
+    }
+
+    private static void WalletRequests()
+    {
+        using (var client = new WalletClient(new FakeHandler(delegate(HttpRequestMessage message,
+            CancellationToken cancellation)
+        {
+            Equal(WalletClient.BaseUrl + "wallet%2Btest?details=basic", message.RequestUri.AbsoluteUri);
+            Equal(null, message.Headers.Authorization);
+            return Task.FromResult(Response(HttpStatusCode.OK, "{\"balance\":\"2247260305\"}"));
+        })))
+            Equal(22.47260305m, client.FetchAsync("wallet+test", CancellationToken.None)
+                .GetAwaiter().GetResult());
+        using (var client = new WalletClient(new FakeHandler(delegate
+        {
+            return Task.FromResult(Response(HttpStatusCode.ServiceUnavailable, "{}"));
+        })))
+            Throws<HttpRequestException>(delegate {
+                client.FetchAsync("wallet", CancellationToken.None).GetAwaiter().GetResult(); });
+        using (var client = new WalletClient(new FakeHandler(delegate
+        {
+            return Task.FromResult(Response(HttpStatusCode.OK, new string(' ', 256 * 1024 + 1)));
+        })))
+            Throws<InvalidDataException>(delegate {
+                client.FetchAsync("wallet", CancellationToken.None).GetAwaiter().GetResult(); });
+        using (var client = new WalletClient(new FakeHandler(delegate
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StreamContent(new StalledStream()) });
+        })))
+        using (var cancellation = new CancellationTokenSource(100))
+            Throws<OperationCanceledException>(delegate {
+                client.FetchAsync("wallet", cancellation.Token).GetAwaiter().GetResult(); });
+    }
+
+    private static void WalletNotificationLifecycle()
+    {
+        string path = Path.Combine(Artifacts, "wallet-notifications.json");
+        decimal balance = 12m;
+        bool walletFails = false;
+        bool webhookFails = false;
+        int notifications = 0;
+        string lastNotification = "";
+        using (var server = new LocalTickerServer())
+        {
+            var store = new SettingsStore(path);
+            store.Save(new AppSettings {
+                WalletAddress = "wallet", WalletThreshold = "10", WindowsNotifications = false,
+                WebhookNotifications = true, Webhook = new WebhookSettings {
+                    Url = "https://notify.test/hook?title={{title}}&message={{message}}" } });
+            using (var context = new TrayContext(store, new ExchangeRateClient(),
+                new AccountClient(new FakeHandler(delegate {
+                    return Task.FromResult(Response(HttpStatusCode.ServiceUnavailable, "{}")); })),
+                new WebhookClient(new FakeHandler(delegate(HttpRequestMessage request, CancellationToken token)
+                {
+                    notifications++;
+                    lastNotification = Uri.UnescapeDataString(request.RequestUri.Query);
+                    return Task.FromResult(Response(webhookFails ?
+                        HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK, "{}"));
+                })), CreateTicker(),
+                new WalletClient(new FakeHandler(delegate {
+                    return Task.FromResult(Response(walletFails ?
+                        HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK,
+                        "{\"balance\":\"" + (balance * 100000000m).ToString("0", CultureInfo.InvariantCulture) + "\"}"));
+                }))))
+            {
+                var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
+                PumpUntil(delegate { return refresh.Enabled && Field<decimal?>(context, "walletBalance").HasValue; });
+                Equal(0, notifications);
+                balance = 9.99999999m;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(0, notifications);
+                balance = 10m;
+                walletFails = true;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(0, notifications);
+                walletFails = false;
+                webhookFails = true;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(1, notifications);
+                Equal(true, lastNotification.Contains("title=" + WalletMonitor.Title));
+                Equal(true, lastNotification.Contains("message=钱包余额达到阈值"));
+                Equal(true, WorkerMenuText(context).Contains("钱包 Webhook 通知失败"));
+                webhookFails = false;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(2, notifications);
+                Equal(false, WorkerMenuText(context).Contains("钱包 Webhook 通知失败"));
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(2, notifications);
+                balance = 9m;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                balance = 11m;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(3, notifications);
+                foreach (bool changeWallet in new[] { true, false })
+                {
+                    balance = 9m;
+                    refresh.PerformClick();
+                    PumpUntil(delegate { return refresh.Enabled; });
+                    balance = 12m;
+                    var next = store.Load();
+                    if (changeWallet) next.WalletAddress = "new-wallet";
+                    else next.WalletThreshold = "11";
+                    store.Save(next);
+                    context.GetType().GetMethod("ApplySettings", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .Invoke(context, new object[] { next });
+                    PumpUntil(delegate { return refresh.Enabled; });
+                    Equal(3, notifications);
+                }
+                context.ExitThread();
+            }
+        }
+        File.Delete(path);
+    }
+
+    private static void WalletBalanceLifecycle()
+    {
+        string path = Path.Combine(Artifacts, "wallet-balance-settings.json");
+        bool fails = true;
+        bool stalled = false;
+        int requests = 0;
+        var pending = new TaskCompletionSource<HttpResponseMessage>();
+        using (var server = new LocalTickerServer())
+        {
+            var store = new SettingsStore(path);
+            store.Save(new AppSettings { WalletAddress = "old-wallet" });
+            using (var context = CreateContext(store, null,
+                new AccountClient(new FakeHandler(delegate {
+                    return Task.FromResult(Response(HttpStatusCode.ServiceUnavailable, "{}")); })),
+                new WalletClient(new FakeHandler(delegate(HttpRequestMessage message, CancellationToken token)
+                {
+                    requests++;
+                    if (stalled && message.RequestUri.AbsolutePath.EndsWith("old-wallet"))
+                        return pending.Task;
+                    return Task.FromResult(Response(fails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK,
+                        "{\"balance\":\"123456789\"}"));
+                }))))
+            {
+                var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
+                PumpUntil(delegate { return refresh.Enabled && requests == 1; });
+                Equal(true, WorkerMenuText(context).Contains("Pearl Wallet  -- PRL"));
+                Equal(true, WorkerMenuText(context).Contains("余额获取失败"));
+                fails = false;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(true, WorkerMenuText(context).Contains("Pearl Wallet  1.23 PRL"));
+                Equal(true, WorkerMenuText(context).Contains("矿机获取失败"));
+                fails = true;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(true, WorkerMenuText(context).Contains("1.23 PRL"));
+                Equal(true, WorkerMenuText(context).Contains("余额刷新失败"));
+                stalled = true;
+                refresh.PerformClick();
+                var next = store.Load();
+                next.WalletAddress = "new-wallet";
+                context.GetType().GetMethod("ApplySettings", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(context, new object[] { next });
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(null, Field<decimal?>(context, "walletBalance"));
+                pending.SetResult(Response(HttpStatusCode.OK, "{\"balance\":\"99900000000\"}"));
+                Application.DoEvents();
+                Equal(null, Field<decimal?>(context, "walletBalance"));
+                fails = false;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(1.23456789m, Field<decimal?>(context, "walletBalance").Value);
+                next = store.Load();
+                next.WalletAddress = "";
+                context.GetType().GetMethod("ApplySettings", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(context, new object[] { next });
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(false, WorkerMenuText(context).Contains("Pearl Wallet"));
+                int before = requests;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(before, requests);
+            }
+        }
+        File.Delete(path);
     }
 
     private static TickerClient CreateTicker()
@@ -1932,7 +2273,9 @@ internal static class Tests
                                 await stream.ReadAsync(new byte[1], 0, 1);
                                 continue;
                             }
-                            byte[] body = Encoding.UTF8.GetBytes("{\"ticker\":{\"high\":\"1.93\",\"last\":\"" + Price + "\"}}");
+                            byte[] body = Encoding.UTF8.GetBytes(
+                                "[{\"timestamp\":1793350800000,\"price\":1.93}," +
+                                "{\"timestamp\":1793354400000,\"price\":\"" + Price + "\"}]");
                             byte[] headers = Encoding.ASCII.GetBytes("HTTP/1.1 " + Status +
                                 (Status == 200 ? " OK" : " Unauthorized") +
                                 "\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " +

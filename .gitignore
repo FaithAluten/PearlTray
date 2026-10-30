@@ -1,7 +1,16 @@
 .env
+.env.*
+!.env.example
 *.tar.gz
 dist/
 dist-*/
 artifacts/
 *.zip
 settings.json
+settings.json.*
+*-settings.json
+/new/
+*.user
+*.suo
+*.pdb
+*.log

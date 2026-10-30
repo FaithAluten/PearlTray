@@ -9,11 +9,16 @@ namespace PearlTray
     {
         public decimal Threshold { get; set; }
         public decimal Actual { get; set; }
+        public bool IsRecovery { get; set; }
+        public string Title
+        {
+            get { return IsRecovery ? "PearlTray 算力恢复" : "PearlTray 算力告警"; }
+        }
         public string Message
         {
             get
             {
-                return "总算力过低：当前 " +
+                return (IsRecovery ? "总算力恢复：当前 " : "总算力过低：当前 ") +
                     Actual.ToString("0.00", CultureInfo.InvariantCulture) + " TH/s，阈值 " +
                     Threshold.ToString("0.########", CultureInfo.InvariantCulture) + " TH/s。";
             }
@@ -24,6 +29,8 @@ namespace PearlTray
     {
         private bool windowsSent;
         private bool webhookSent;
+        private bool wasLow;
+        private bool recoveryPending;
 
         public static decimal ParseThreshold(string value)
         {
@@ -45,13 +52,28 @@ namespace PearlTray
             var threshold = ParseThreshold(settings.HashrateThresholds);
             var alerts = new List<HashrateAlert>();
             decimal actual = Total(workers);
-            if (threshold > 0 && actual < threshold)
-                alerts.Add(new HashrateAlert { Threshold = threshold, Actual = actual });
-            else
+            if (threshold == 0)
             {
+                wasLow = false;
+                recoveryPending = false;
+                windowsSent = false;
+                webhookSent = false;
+                return alerts;
+            }
+            bool isLow = actual < threshold;
+            if (isLow != wasLow)
+            {
+                recoveryPending = wasLow && !isLow;
                 windowsSent = false;
                 webhookSent = false;
             }
+            wasLow = isLow;
+            // Keep the current event available so each channel can retry independently.
+            if (isLow || recoveryPending)
+                alerts.Add(new HashrateAlert
+                {
+                    Threshold = threshold, Actual = actual, IsRecovery = recoveryPending
+                });
             return alerts;
         }
 

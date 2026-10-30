@@ -19,6 +19,7 @@ namespace PearlTray
         public string ExchangeRateUrl { get; set; }
         public string WalletAddress { get; set; }
         public string HashrateThresholds { get; set; }
+        public string WalletThreshold { get; set; }
         public bool WindowsNotifications { get; set; }
         public bool WebhookNotifications { get; set; }
         public WebhookSettings Webhook { get; set; }
@@ -31,6 +32,7 @@ namespace PearlTray
             ExchangeRateUrl = DefaultExchangeRateUrl;
             WalletAddress = "";
             HashrateThresholds = "0";
+            WalletThreshold = "0";
             WindowsNotifications = true;
             Webhook = new WebhookSettings();
         }
@@ -38,6 +40,7 @@ namespace PearlTray
         public void Validate()
         {
             HashrateMonitor.ParseThreshold(HashrateThresholds);
+            WalletMonitor.ParseThreshold(WalletThreshold);
             if (Webhook == null) throw new ArgumentException("Webhook 配置无效。");
             if (WebhookNotifications) Webhook.Validate();
             Uri uri;
@@ -65,6 +68,7 @@ namespace PearlTray
         public string ExchangeRateUrl { get; set; }
         public string WalletAddress { get; set; }
         public string HashrateThresholds { get; set; }
+        public string WalletThreshold { get; set; }
         public bool? WindowsNotifications { get; set; }
         public bool WebhookNotifications { get; set; }
         public WebhookSettings Webhook { get; set; }
@@ -105,6 +109,7 @@ namespace PearlTray
                 ExchangeRateUrl = stored.ExchangeRateUrl ?? AppSettings.DefaultExchangeRateUrl,
                 WalletAddress = stored.WalletAddress ?? "",
                 HashrateThresholds = MigrateThreshold(stored.HashrateThresholds),
+                WalletThreshold = stored.WalletThreshold ?? "0",
                 WindowsNotifications = stored.WindowsNotifications ?? true,
                 WebhookNotifications = stored.WebhookNotifications,
                 Webhook = stored.Webhook ?? new WebhookSettings()
@@ -128,6 +133,7 @@ namespace PearlTray
                 ExchangeRateUrl = settings.ExchangeRateUrl,
                 WalletAddress = settings.WalletAddress,
                 HashrateThresholds = settings.HashrateThresholds,
+                WalletThreshold = settings.WalletThreshold,
                 WindowsNotifications = settings.WindowsNotifications,
                 WebhookNotifications = settings.WebhookNotifications,
                 Webhook = settings.Webhook.CopyWithoutPassword(),

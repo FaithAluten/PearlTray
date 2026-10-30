@@ -93,6 +93,7 @@ namespace PearlTray
     {
         public int ValueStart { get; private set; }
         public int ValueLength { get; private set; }
+        public Color ValueColor { get; set; }
 
         public MetricMenuItem(string label, string value, string suffix)
         {
@@ -104,7 +105,7 @@ namespace PearlTray
         public void SetMetric(string label, string value, string suffix)
         {
             ValueStart = label.Length;
-            ValueLength = value == "--" ? 0 : value.Length;
+            ValueLength = value.Length;
             Text = label + value + suffix;
         }
 
@@ -464,6 +465,8 @@ namespace PearlTray
                 return;
             }
 
+            Color valueColor = metric.ValueColor.IsEmpty ? accent :
+                light ? ControlPaint.Dark(metric.ValueColor) : metric.ValueColor;
             string prefix = metric.Text.Substring(0, metric.ValueStart).TrimEnd();
             string value = metric.Text.Substring(metric.ValueStart, metric.ValueLength);
             string suffix = metric.Text.Substring(metric.ValueStart + metric.ValueLength);
@@ -474,6 +477,15 @@ namespace PearlTray
             {
                 int suffixWidth = TextRenderer.MeasureText(e.Graphics, suffix, e.TextFont,
                     Size.Empty, flags).Width;
+                // All metrics share the same unit column, including PRL and TH/s.
+                foreach (ToolStripItem item in e.ToolStrip.Items)
+                {
+                    var other = item as MetricMenuItem;
+                    if (other == null) continue;
+                    string unit = other.Text.Substring(other.ValueStart + other.ValueLength);
+                    suffixWidth = Math.Max(suffixWidth, TextRenderer.MeasureText(e.Graphics,
+                        unit, other.Font, Size.Empty, flags).Width);
+                }
                 int valueWidth = value.Length == 0 ? 0 :
                     TextRenderer.MeasureText(e.Graphics, value, valueFont, Size.Empty, flags).Width;
                 int valueX = right - suffixWidth - valueWidth;
@@ -483,7 +495,7 @@ namespace PearlTray
                     e.ToolStrip.ForeColor, flags | TextFormatFlags.EndEllipsis);
                 if (valueWidth > 0)
                     TextRenderer.DrawText(e.Graphics, value, valueFont,
-                        new Rectangle(valueX, 0, valueWidth, e.Item.Height), accent, flags);
+                        new Rectangle(valueX, 0, valueWidth, e.Item.Height), valueColor, flags);
                 TextRenderer.DrawText(e.Graphics, suffix, e.TextFont,
                     new Rectangle(right - suffixWidth, 0, suffixWidth, e.Item.Height), muted, flags);
             }

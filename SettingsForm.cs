@@ -15,6 +15,7 @@ namespace PearlTray
         private readonly SettingsStore store;
         private readonly AppSettings currentSettings;
         private readonly TextBox thresholds;
+        private readonly TextBox walletThreshold;
         private readonly CheckBox windowsNotifications;
         private readonly CheckBox webhookNotifications;
         private readonly Label totals;
@@ -99,6 +100,9 @@ namespace PearlTray
             summary.Controls.Add(totals, 1, 0);
             Fields.Controls.Add(summary);
 
+            walletThreshold = AddTextField("钱包阈值（PRL；0 关闭）", current.WalletThreshold, false);
+            walletThreshold.AccessibleName = "钱包阈值（PRL）";
+
             AddSection("通知方式", "\uE7F4");
             windowsNotifications = new SettingsToggle("Windows 系统通知", current.WindowsNotifications);
             Fields.Controls.Add(windowsNotifications);
@@ -153,6 +157,7 @@ namespace PearlTray
                 ExchangeRateUrl = exchangeRateUrl.Text.Trim(),
                 WalletAddress = walletAddress.Text.Trim(),
                 HashrateThresholds = thresholds.Text.Trim(),
+                WalletThreshold = walletThreshold.Text.Trim(),
                 WindowsNotifications = windowsNotifications.Checked,
                 WebhookNotifications = webhookNotifications.Checked,
                 Webhook = webhook
