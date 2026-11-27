@@ -81,11 +81,15 @@ namespace PearlTray
 
     public sealed class TrayActionItem : ToolStripMenuItem
     {
-        public string Glyph { get; private set; }
+        private readonly string glyph;
+        private readonly string uncheckedGlyph;
+        public string Glyph { get { return !Checked && HasStateGlyph ? uncheckedGlyph : glyph; } }
+        public bool HasStateGlyph { get { return uncheckedGlyph != null; } }
 
-        public TrayActionItem(string text, string glyph) : base(text)
+        public TrayActionItem(string text, string glyph, string uncheckedGlyph = null) : base(text)
         {
-            Glyph = glyph;
+            this.glyph = glyph;
+            this.uncheckedGlyph = uncheckedGlyph;
         }
     }
 
@@ -449,9 +453,9 @@ namespace PearlTray
                                 TrayMenuStyle.Scale(e.ToolStrip, 16), e.Item.Height),
                             e.TextColor, flags | TextFormatFlags.HorizontalCenter);
                 }
-                // Currency selections share the text gutter and use a trailing check.
+                // Checked items keep a trailing check even without a check gutter.
                 var item = e.Item as ToolStripMenuItem;
-                if (item != null && item.Checked)
+                if (item != null && item.Checked && (action == null || !action.HasStateGlyph))
                 {
                     int x = e.Item.Width - TrayMenuStyle.Scale(e.ToolStrip, 22);
                     int y = e.Item.Height / 2;

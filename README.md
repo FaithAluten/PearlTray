@@ -4,45 +4,44 @@
 
 ## 功能
 
-- **实时价格**：读取 Kryptex 的 PRL 价格，取其价格页面默认月线的最后一个数据点，无需 API Token 或中转服务。
+- **实时价格**：通过公开行情接口获取 SafeTrade PEARL/USDT 最新成交价，无需配置 API Token。
 - **显示设置**：支持 USDT / 人民币切换，以及 0、1、2 位小数。
 - **矿机监控**：填写钱包地址后，可查看在线矿机、显卡型号及算力。
+- **价格提醒**：分别设置上限和下限，符合条件时每次成功刷新均可发送 Windows 通知或 Webhook。
 - **钱包余额**：右键菜单顶部显示 Pearl Wallet 余额，单位 PRL，与显卡算力按列对齐。
 - **算力告警**：总算力低于设定阈值或恢复时，发送 Windows 通知或 Webhook。
 - **余额通知**：钱包余额从阈值以下达到阈值时通知，支持失败重试。
-- **登录自启动**：随包提供开启和关闭自启动的 BAT 脚本，仅作用于当前 Windows 用户。
+- **开机自启**：通过托盘右键菜单切换当前 Windows 用户的登录自启动。
 - **主题适配**：菜单和设置窗口跟随 Windows 应用深浅主题。
 - **免安装运行**：配置文件与 exe 放在同一目录。
 
 ## 下载与运行
 
-从仓库的 **Releases** 页面下载 `PearlTray-windows.zip`，解压后运行 `PearlTray.exe`。
+从 [Releases](https://github.com/FaithAluten/PearlTray/releases/latest) 下载 `PearlTray-windows.zip`，解压后运行 `PearlTray.exe`。
 
 需要 Windows 10 / 11 和 .NET Framework 4.8。
 
 首次运行会自动获取价格。若图标出现在任务栏折叠菜单中，可将其拖到常驻区域。
 
-压缩包包含 `PearlTray.exe`、`PearlTray.exe.config`、两个自启动 BAT、README 和字体许可文件。发布包不包含个人 `settings.json`、钱包地址、Webhook 配置、日志或测试输出。
+压缩包包含 `PearlTray.exe`、`PearlTray.exe.config`、README 和字体许可文件。发布包不包含个人 `settings.json`、钱包地址、Webhook 配置、日志或测试输出。
 
 ### 登录自启动
 
-将 `Enable-Startup.bat`、`Disable-Startup.bat` 与 `PearlTray.exe` 放在同一目录：
-
-- 双击 `Enable-Startup.bat`，在当前用户的 Windows 启动文件夹创建 `PearlTray.lnk`，下次登录时自动运行，无需管理员权限。
-- 双击 `Disable-Startup.bat`，删除该快捷方式，关闭自启动。
-- 移动程序目录后，重新运行 `Enable-Startup.bat` 更新快捷方式。脚本运行完毕后按任意键关闭窗口。
+右键托盘图标，点击「开机自启」切换。首次运行新版时默认开启。左侧 ✓ 表示开启，× 表示关闭。开关状态会保留，开启后下次登录 Windows 时自动运行，无需管理员权限。移动程序目录后，请关闭并重新开启该选项，更新启动快捷方式。
 
 ## 使用方式
 
 | 操作 | 功能 |
 | --- | --- |
 | 左键点击托盘数字 | 在默认浏览器中打开 SafeTrade 交易页面 |
-| 右键点击托盘数字 | 查看矿机信息、刷新数据、修改设置或退出 |
+| 右键点击托盘数字 | 查看矿机信息，使用「立即刷新 → 显示单位 → 开机自启 → 设置」，或退出 |
 | 鼠标悬停 | 查看完整价格、刷新状态及最后成功更新时间 |
 
 默认每 **60 秒**刷新一次，最低支持 **5 秒**。刷新失败时保留上次价格，并以黄色提示；尚未获取到价格时显示 `--` 或 `!`。
 
-价格接口为 `https://pool.kryptex.com/api/v1/coin/prl/price/chart?time_range=month`，价格源采用美元报价。人民币显示沿用 USDT/CNY 参考汇率换算，支持自定义汇率接口。左键仍打开 SafeTrade 交易页面。
+价格来自 `https://stpl.liqiye.com/pearl-usdt` 返回的 SafeTrade PEARL/USDT 最新成交价。人民币显示使用 USDT/CNY 参考汇率换算，支持自定义汇率接口。左键打开 SafeTrade 交易页面。
+
+在「设置」的「价格提醒」中可以分别设置上限（≥）和下限（≤），单位为 USDT。填 0 关闭该项。价格持续满足条件时，每次成功刷新都会按已选通知方式发送提醒，请谨慎开启。上游刷新失败时显示的缓存价格不会触发提醒。
 
 ## 矿机与告警
 
@@ -88,11 +87,11 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test
 - 程序：`dist/PearlTray.exe`
 - 免安装包：`PearlTray-windows.zip`
 
-打包采用明确的文件清单，即使输出目录中已有个人配置或测试文件，也不会将它们收入 ZIP。两个 BAT 会复制到输出目录并打入免安装包。
+打包采用明确的文件清单，即使输出目录中已有个人配置或测试文件，也不会将它们收入 ZIP。
 
 ## 源码结构
 
-仓库以当前 Windows 托盘版为准，无需部署服务端。
+仓库以当前 Windows 托盘版为准，运行时直接使用已部署的行情接口。
 
 | 路径 | 内容 |
 | --- | --- |
@@ -101,7 +100,13 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 -Test
 | `assets/` | 内嵌字体和字体许可 |
 | `tools/` | 构建时使用的图标生成工具 |
 | `build.ps1` | 编译、测试和打包脚本 |
-| `Enable-Startup.bat` / `Disable-Startup.bat` | 开启 / 关闭当前用户登录自启动 |
+
+## v1.5.0 更新
+
+- 行情改用 SafeTrade PEARL/USDT 最新成交价。
+- 新增价格上下限提醒。每次成功刷新命中条件都会通知，两个阈值默认均为 `0`，表示关闭。
+- 托盘右键菜单新增「开机自启」，首次运行新版默认开启，左侧显示勾或叉。旧版 BAT 脚本已移除。
+- 调整右键菜单顺序为「立即刷新 → 显示单位 → 开机自启 → 设置」。
 
 ## v1.4.0 更新
 

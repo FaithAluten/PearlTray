@@ -10,9 +10,9 @@ New-Item -ItemType Directory -Path $output -Force | Out-Null
 $references = @(
     "/r:System.dll", "/r:System.Core.dll", "/r:System.Drawing.dll",
     "/r:System.Windows.Forms.dll", "/r:System.Net.Http.dll",
-    "/r:System.Web.Extensions.dll", "/r:System.Security.dll"
+    "/r:System.Web.Extensions.dll", "/r:System.Security.dll", "/r:Microsoft.CSharp.dll"
 )
-$sources = @("Program.cs", "Settings.cs", "SettingsAppearance.cs", "SettingsForm.cs", "WebhookSettingsForm.cs", "HashrateMonitor.cs", "WalletMonitor.cs", "WebhookClient.cs", "TickerClient.cs", "ExchangeRateClient.cs", "AccountClient.cs", "WalletClient.cs", "TrayIconRenderer.cs", "MetricMenuRenderer.cs", "AssemblyInfo.cs") |
+$sources = @("Program.cs", "Settings.cs", "SettingsAppearance.cs", "SettingsForm.cs", "WebhookSettingsForm.cs", "HashrateMonitor.cs", "WalletMonitor.cs", "PriceMonitor.cs", "StartupShortcut.cs", "WebhookClient.cs", "TickerClient.cs", "ExchangeRateClient.cs", "AccountClient.cs", "WalletClient.cs", "TrayIconRenderer.cs", "MetricMenuRenderer.cs", "AssemblyInfo.cs") |
     ForEach-Object { Join-Path $PSScriptRoot $_ }
 $iconTool = Join-Path $output "CreateIcon.exe"
 & $compiler /nologo /target:exe /optimize+ /warnaserror+ "/out:$iconTool" `
@@ -33,11 +33,6 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "app.config") -Destination "$exe
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "README.md") -Destination (Join-Path $output "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "THIRD-PARTY-NOTICES.txt") -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assets\OFL-JetBrainsMono.txt") -Destination $output -Force
-$startupScripts = @("Enable-Startup.bat", "Disable-Startup.bat") |
-    ForEach-Object { Join-Path $output $_ }
-foreach ($name in @("Enable-Startup.bat", "Disable-Startup.bat")) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $output -Force
-}
 if ($Test) {
     $testExecutable = Join-Path $output "PearlTray.Tests.exe"
     & $compiler /nologo /target:exe /optimize+ /warnaserror+ /codepage:65001 /utf8output `
@@ -57,9 +52,9 @@ if ($Test) {
 }
 $release = Join-Path $PSScriptRoot $PackageName
 # Package only public runtime files; never include local settings or test artifacts.
-Compress-Archive -LiteralPath (@(
+Compress-Archive -LiteralPath @(
     $executable, "$executable.config", (Join-Path $output "README.md"),
     (Join-Path $output "THIRD-PARTY-NOTICES.txt"), (Join-Path $output "OFL-JetBrainsMono.txt")
-) + $startupScripts) -DestinationPath $release -Force
+) -DestinationPath $release -Force
 Write-Output "Built: $executable"
 Write-Output "Package: $release"

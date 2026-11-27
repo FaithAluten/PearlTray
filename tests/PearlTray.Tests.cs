@@ -20,6 +20,8 @@ internal static class Tests
     private static int failed;
     private static readonly string Artifacts = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "artifacts"));
+    private static readonly string TestStartupDirectory =
+        Path.Combine(Artifacts, "test-startup");
 
     [STAThread]
     private static int Main(string[] args)
@@ -35,7 +37,7 @@ internal static class Tests
         if (args.Length == 1 && args[0] == "--live-ticker")
         {
             using (var client = new TickerClient())
-                Console.WriteLine("Kryptex PRL/USD: " + client.FetchAsync(new AppSettings(),
+                Console.WriteLine("SafeTrade PEARL/USDT: " + client.FetchAsync(new AppSettings(),
                     CancellationToken.None).GetAwaiter().GetResult().Last);
             return 0;
         }
@@ -88,20 +90,27 @@ internal static class Tests
             ExportFontComparison(args[1]);
             return 0;
         }
-        Check("Reads the final month chart price, not the first point", delegate
+        Check("Reads the nested SafeTrade last price", delegate
         {
             Equal("1.76", TickerClient.ParseLast(
-                "[{\"timestamp\":1793350800000,\"price\":1.93}," +
-                "{\"timestamp\":1793354400000,\"price\":1.76}]"));
+                "{\"at\":\"1795803001\",\"ticker\":{\"high\":\"1.93\",\"last\":\"1.76\"}}"));
         });
-        Check("Accepts numeric JSON", delegate { Equal("1.93", TickerClient.ParseLast("[{\"price\":1.93}]")); });
-        Check("Does not substitute another price when the final chart point is invalid", delegate
+        Check("Accepts numeric JSON", delegate { Equal("1.93", TickerClient.ParseLast(TickerJson("1.93"))); });
+        Check("Price thresholds are inclusive and use full precision", delegate
         {
-            foreach (string json in new[] { "[{\"price\":1.76},null]",
-                "[{\"price\":1.76},{}]", "[{\"price\":1.76},{\"price\":-1}]",
-                "[{\"price\":1.76},[]]", "[{\"price\":1.76},3]" })
-                Throws<InvalidDataException>(delegate { TickerClient.ParseLast(json); });
+            var settings = new AppSettings();
+            Equal<string>(null, PriceMonitor.Evaluate(settings, "0"));
+            settings.PriceHighThreshold = "1.765";
+            settings.PriceLowThreshold = "1.755";
+            Equal<string>(null, PriceMonitor.Evaluate(settings, "1.76"));
+            Equal(true, PriceMonitor.Evaluate(settings, "1.765").Contains("上限"));
+            Equal(true, PriceMonitor.Evaluate(settings, "1.755").Contains("下限"));
+            settings.PriceLowThreshold = "1.765";
+            Equal(true, PriceMonitor.Evaluate(settings, "1.765").Contains("上限 1.765 USDT，达到下限"));
+            settings.PriceLowThreshold = "-1";
+            Throws<ArgumentException>(settings.Validate);
         });
+        Check("Price alerts repeat on fresh quotes only", PriceAlertLifecycle);
         Check("Default settings require no credentials", delegate { new AppSettings().Validate(); });
         Check("Default settings stay beside the executable regardless of working directory", delegate
         {
@@ -116,17 +125,17 @@ internal static class Tests
         });
         Check("Preserves meaningful precision", delegate
         {
-            Equal("0.00001234", TickerClient.ParseLast("[{\"price\":\"0.0000123400\"}]"));
+            Equal("0.00001234", TickerClient.ParseLast(TickerJson("\"0.0000123400\"")));
         });
-        Check("Accepts zero", delegate { Equal("0", TickerClient.ParseLast("[{\"price\":\"0\"}]")); });
-        Check("Accepts a UTF-8 BOM", delegate { Equal("1.76", TickerClient.ParseLast("\uFEFF[{\"price\":\"1.76\"}]")); });
-        Check("Accepts exponent", delegate { Equal("0.0001", TickerClient.ParseLast("[{\"price\":\"1e-4\"}]")); });
+        Check("Accepts zero", delegate { Equal("0", TickerClient.ParseLast(TickerJson("\"0\""))); });
+        Check("Accepts a UTF-8 BOM", delegate { Equal("1.76", TickerClient.ParseLast("\uFEFF" + TickerJson("1.76"))); });
+        Check("Accepts exponent", delegate { Equal("0.0001", TickerClient.ParseLast(TickerJson("\"1e-4\""))); });
         string[] bad = {
-            "not json", "[]", "null", "{}", "{\"ticker\":{\"last\":\"1.76\"}}",
-            "[{\"high\":\"1.93\"}]", "[{\"price\":null}]", "[{\"price\":true}]",
-            "[{\"price\":{}}]", "[{\"price\":[]}]", "[{\"price\":\"NaN\"}]", "[{\"price\":\"-1\"}]",
-            "[{\"price\":\"1,234\"}]", "[{\"price\":\"1e-29\"}]", "[{\"price\":\"\"}]",
-            "[{\"price\":\"1.76\"}]%"
+            "not json", "[]", "null", "{}", "[{\"price\":\"1.76\"}]",
+            "{\"ticker\":{\"high\":\"1.93\"}}", TickerJson("null"), TickerJson("true"),
+            TickerJson("{}"), TickerJson("[]"), TickerJson("\"NaN\""), TickerJson("\"-1\""),
+            TickerJson("\"1,234\""), TickerJson("\"1e-29\""), TickerJson("\"\""),
+            TickerJson("1.76") + "%"
         };
         foreach (string input in bad)
         {
@@ -246,16 +255,16 @@ internal static class Tests
             Equal(1, store.Load().DecimalPlaces);
             File.Delete(path);
         });
-        Check("GET Kryptex month chart with browser UA and no authorization", delegate
+        Check("GET SafeTrade ticker through the custom domain", delegate
         {
             var handler = new FakeHandler(delegate(HttpRequestMessage message, CancellationToken cancellation)
             {
                 Equal("GET", message.Method.Method);
                 Equal(null, message.Headers.Authorization);
                 Equal(TickerClient.BrowserUserAgent, message.Headers.UserAgent.ToString());
-                Equal("https://pool.kryptex.com/api/v1/coin/prl/price/chart?time_range=month",
+                Equal("https://stpl.liqiye.com/pearl-usdt",
                     message.RequestUri.AbsoluteUri);
-                return Task.FromResult(Response(HttpStatusCode.OK, "[{\"price\":1.93},{\"price\":1.76}]"));
+                return Task.FromResult(Response(HttpStatusCode.OK, TickerJson("1.76")));
             });
             using (var client = new TickerClient(handler))
             {
@@ -266,7 +275,7 @@ internal static class Tests
         });
         Check("Honors upstream stale-cache header", delegate
         {
-            var response = Response(HttpStatusCode.OK, "[{\"price\":1.76}]");
+            var response = Response(HttpStatusCode.OK, TickerJson("1.76"));
             response.Headers.Add("X-Upstream-State", "refresh-failed");
             using (var client = new TickerClient(new FakeHandler(
                 delegate { return Task.FromResult(response); })))
@@ -308,7 +317,7 @@ internal static class Tests
                 HttpRequestMessage message, CancellationToken token)
             {
                 await Task.Delay(10000, token);
-                return Response(HttpStatusCode.OK, "[{\"price\":1.76}]");
+                return Response(HttpStatusCode.OK, TickerJson("1.76"));
             })))
             {
                 cancellation.CancelAfter(50);
@@ -1323,7 +1332,7 @@ internal static class Tests
                     notifications++;
                     lastNotification = Uri.UnescapeDataString(request.RequestUri.Query);
                     return Task.FromResult(Response(webhookFails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK, "{}"));
-                })), CreateTicker(), TestWallet()))
+                })), CreateTicker(), TestWallet(), TestStartup()))
             {
                 var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
                 PumpUntil(delegate { return notifications == 1 && refresh.Enabled; });
@@ -1445,7 +1454,7 @@ internal static class Tests
                 context.GetType().GetMethod("ApplySettings", BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(context, new object[] { settings });
                 PumpUntil(delegate { return refresh.Enabled; });
-                Equal(6, menu.Items.Count);
+                Equal(7, menu.Items.Count);
                 Equal(false, Field<ToolStripSeparator>(context, "workerSeparator").Visible);
                 Equal(false, WorkerMenuText(context).Contains("nj-01"));
                 int before = requests;
@@ -1647,6 +1656,92 @@ internal static class Tests
         menu.Close();
     }
 
+    private static void PriceAlertLifecycle()
+    {
+        string folder = Path.Combine(Artifacts, Guid.NewGuid().ToString("N"));
+        int alerts = 0;
+        using (var server = new LocalTickerServer())
+        {
+            var startup = new StartupShortcut(folder, folder);
+            var store = new SettingsStore(Path.Combine(folder, "settings.json"));
+            store.Save(new AppSettings {
+                PriceHighThreshold = "1.76", PriceLowThreshold = "0.5", WindowsNotifications = false,
+                WebhookNotifications = true, Webhook = new WebhookSettings {
+                    Url = "https://notify.test/hook?title={{title}}&message={{message}}" } });
+            Equal("1.76", store.Load().PriceHighThreshold);
+            Equal("0.5", store.Load().PriceLowThreshold);
+            using (var context = new TrayContext(store, new ExchangeRateClient(), new AccountClient(),
+                new WebhookClient(new FakeHandler(delegate(HttpRequestMessage request, CancellationToken token)
+                {
+                    Equal(true, Uri.UnescapeDataString(request.RequestUri.Query).Contains(PriceMonitor.Title));
+                    alerts++;
+                    return Task.FromResult(Response(HttpStatusCode.OK, "{}"));
+                })), CreateTicker(), TestWallet(), startup))
+            {
+                var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
+                PumpUntil(delegate { return alerts == 1 && refresh.Enabled; });
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(2, alerts);
+                server.IsStale = true;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(true, Field<bool>(context, "warning"));
+                Equal(2, alerts);
+                server.Status = 502;
+                refresh.PerformClick();
+                PumpUntil(delegate { return refresh.Enabled; });
+                Equal(2, alerts);
+
+                var menu = Field<ContextMenuStrip>(context, "menu");
+                var startupItem = (TrayActionItem)menu.Items[3];
+                Equal("开机自启", startupItem.Text);
+                Equal(true, startup.Enabled);
+                Equal(true, startupItem.Checked);
+                string enabledGlyph = RenderStartupGlyph(menu, startupItem, true);
+                startupItem.PerformClick();
+                Equal(false, startup.Enabled);
+                Equal(false, startupItem.Checked);
+                string disabledGlyph = RenderStartupGlyph(menu, startupItem, false);
+                Equal(false, enabledGlyph == disabledGlyph);
+                new StartupShortcut(folder, folder).Initialize();
+                Equal(false, startup.Enabled);
+                startupItem.PerformClick();
+                Equal(true, startup.Enabled);
+                Equal(enabledGlyph, RenderStartupGlyph(menu, startupItem, true));
+                startupItem.PerformClick();
+            }
+        }
+    }
+
+    private static string RenderStartupGlyph(ContextMenuStrip menu, TrayActionItem item, bool enabled)
+    {
+        menu.Show(new Point(100, 100));
+        try
+        {
+            Application.DoEvents();
+            Equal(enabled, item.Checked);
+            using (var bitmap = new Bitmap(menu.Width, menu.Height))
+            {
+                menu.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                int gutter = (int)Math.Round(34 * menu.DeviceDpi / 96.0);
+                Rectangle row = Rectangle.Intersect(item.Bounds, new Rectangle(Point.Empty, bitmap.Size));
+                int ink = 0;
+                var pixels = new StringBuilder();
+                for (int y = row.Top + 4; y < row.Bottom - 4; y++)
+                    for (int x = row.Left + 4; x < Math.Min(row.Left + gutter, row.Right); x++)
+                    {
+                        Color pixel = bitmap.GetPixel(x, y);
+                        if (pixel.ToArgb() != bitmap.GetPixel(row.Left + 4, y).ToArgb()) ink++;
+                        pixels.Append(pixel.ToArgb().ToString("X8", CultureInfo.InvariantCulture));
+                    }
+                if (ink < 5) throw new Exception("Startup state glyph did not render.");
+                return pixels.ToString();
+            }
+        }
+        finally { menu.Close(); }
+    }
+
     private static void TrayLifecycle()
     {
         string path = Path.Combine(Artifacts, "lifecycle-settings.json");
@@ -1662,9 +1757,11 @@ internal static class Tests
                 var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
                 PumpUntil(delegate { return tray.Text.Contains("1.76") && tray.Text.Contains("已更新"); });
                 Equal(false, server.Authorized);
-                Equal("设置…", menu.Items[2].Text);
-                Equal("显示单位", menu.Items[3].Text);
-                Equal("退出", menu.Items[5].Text);
+                Equal("立即刷新", menu.Items[1].Text);
+                Equal("显示单位", menu.Items[2].Text);
+                Equal("开机自启", menu.Items[3].Text);
+                Equal("设置…", menu.Items[4].Text);
+                Equal("退出", menu.Items[menu.Items.Count - 1].Text);
                 PumpUntil(delegate { return server.Requests >= 2; });
                 server.Status = 401;
                 refresh.PerformClick();
@@ -1855,7 +1952,12 @@ internal static class Tests
         AccountClient accounts = null, WalletClient wallet = null)
     {
         return new TrayContext(store, rates ?? new ExchangeRateClient(), accounts ?? new AccountClient(),
-            new WebhookClient(), CreateTicker(), wallet ?? TestWallet());
+            new WebhookClient(), CreateTicker(), wallet ?? TestWallet(), TestStartup());
+    }
+
+    private static StartupShortcut TestStartup()
+    {
+        return new StartupShortcut(TestStartupDirectory, TestStartupDirectory);
     }
 
     private static WalletClient TestWallet()
@@ -1928,7 +2030,7 @@ internal static class Tests
                     return Task.FromResult(Response(walletFails ?
                         HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK,
                         "{\"balance\":\"" + (balance * 100000000m).ToString("0", CultureInfo.InvariantCulture) + "\"}"));
-                }))))
+                })), TestStartup()))
             {
                 var refresh = Field<ToolStripMenuItem>(context, "refreshItem");
                 PumpUntil(delegate { return refresh.Enabled && Field<decimal?>(context, "walletBalance").HasValue; });
@@ -2056,6 +2158,11 @@ internal static class Tests
     private static TickerClient CreateTicker()
     {
         return new TickerClient(new LocalTickerHandler(LocalTickerServer.CurrentUrl));
+    }
+
+    private static string TickerJson(string last)
+    {
+        return "{\"ticker\":{\"last\":" + last + "}}";
     }
 
     private static void ExportFontComparison(string previousPath)
@@ -2240,6 +2347,7 @@ internal static class Tests
         public volatile int Status = 200;
         public volatile bool StallHeaders;
         public volatile bool StallBody;
+        public volatile bool IsStale;
         private int requests;
         public int Requests { get { return Volatile.Read(ref requests); } }
         public volatile bool Authorized;
@@ -2273,11 +2381,10 @@ internal static class Tests
                                 await stream.ReadAsync(new byte[1], 0, 1);
                                 continue;
                             }
-                            byte[] body = Encoding.UTF8.GetBytes(
-                                "[{\"timestamp\":1793350800000,\"price\":1.93}," +
-                                "{\"timestamp\":1793354400000,\"price\":\"" + Price + "\"}]");
+                            byte[] body = Encoding.UTF8.GetBytes(TickerJson("\"" + Price + "\""));
                             byte[] headers = Encoding.ASCII.GetBytes("HTTP/1.1 " + Status +
                                 (Status == 200 ? " OK" : " Unauthorized") +
+                                (IsStale ? "\r\nX-Upstream-State: refresh-failed" : "") +
                                 "\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " +
                                 body.Length + "\r\n\r\n");
                             await stream.WriteAsync(headers, 0, headers.Length);

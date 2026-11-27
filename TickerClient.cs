@@ -23,7 +23,7 @@ namespace PearlTray
     public sealed class TickerClient : IDisposable
     {
         public const string PublicTickerUrl =
-            "https://pool.kryptex.com/api/v1/coin/prl/price/chart?time_range=month";
+            "https://stpl.liqiye.com/pearl-usdt";
         public const string BrowserUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -108,11 +108,11 @@ namespace PearlTray
 
         public static string ParseLast(string json)
         {
-            object[] points;
+            Dictionary<string, object> root;
             try
             {
-                points = new JavaScriptSerializer { MaxJsonLength = MaximumResponseBytes }
-                    .DeserializeObject(json.TrimStart('\uFEFF')) as object[];
+                root = new JavaScriptSerializer { MaxJsonLength = MaximumResponseBytes }
+                    .DeserializeObject(json.TrimStart('\uFEFF')) as Dictionary<string, object>;
             }
             catch (Exception error)
             {
@@ -120,13 +120,13 @@ namespace PearlTray
                 throw new InvalidDataException("接口未返回有效的 JSON。");
             }
             object raw;
-            // Match the price page: its default month chart displays the final point.
-            var value = points == null || points.Length == 0 ? null :
-                points[points.Length - 1] as Dictionary<string, object>;
-            if (value == null || !value.TryGetValue("price", out raw) || raw == null ||
+            object ticker;
+            var value = root != null && root.TryGetValue("ticker", out ticker)
+                ? ticker as Dictionary<string, object> : null;
+            if (value == null || !value.TryGetValue("last", out raw) || raw == null ||
                 (!(raw is string) && !(raw is decimal) && !(raw is double) &&
                  !(raw is int) && !(raw is long)))
-                throw new InvalidDataException("接口缺少有效的 price 数值。");
+                throw new InvalidDataException("接口缺少有效的 ticker.last 数值。");
             string text = Convert.ToString(raw, CultureInfo.InvariantCulture).Trim();
             decimal price;
             if (text.Length == 0 || text.Length > 28 ||
@@ -134,7 +134,7 @@ namespace PearlTray
                     NumberStyles.AllowLeadingSign | NumberStyles.AllowExponent,
                     CultureInfo.InvariantCulture, out price) || price < 0 ||
                 (price == 0 && HasNonzeroDigit(text)))
-                throw new InvalidDataException("接口中的 price 不是有效的非负价格。");
+                throw new InvalidDataException("接口中的 ticker.last 不是有效的非负价格。");
             return price.ToString("0.############################", CultureInfo.InvariantCulture);
         }
 
@@ -177,7 +177,8 @@ namespace PearlTray
                     Arguments = "--silent --show-error --max-time 20 --connect-timeout 10 " +
                         "--max-filesize 65536 --proto \"=http,https\" " +
                         "--user-agent \"" + TickerClient.BrowserUserAgent + "\" " +
-                        "--header \"Accept: application/json\" --write-out \"\\n%{http_code}\" " +
+                        "--header \"Accept: application/json\" --include --suppress-connect-headers " +
+                        "--write-out \"\\n%{http_code}\" " +
                         "\"" + request.RequestUri.AbsoluteUri.Replace("\"", "%22") + "\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -194,7 +195,7 @@ namespace PearlTray
                     try
                     {
                         Task<string> output = ReadOutputAsync(process.StandardOutput.BaseStream,
-                            process, 65552, cancellation);
+                            process, 81920, cancellation);
                         Task<string> errors = ReadOutputAsync(process.StandardError.BaseStream,
                             process, 8192, cancellation);
                         await Task.WhenAll(output, errors).ConfigureAwait(false);
@@ -211,11 +212,32 @@ namespace PearlTray
                         if (separator < 0 || !Int32.TryParse(text.Substring(separator + 1),
                             out status) || status < 100 || status > 599)
                             throw new HttpRequestException("接口未返回有效的 HTTP 状态。");
-                        return new HttpResponseMessage((HttpStatusCode)status)
+                        int bodyStart = 0;
+                        string headers;
+                        bool informational;
+                        do
                         {
-                            Content = new StringContent(text.Substring(0, separator), Encoding.UTF8,
+                            int headerEnd = text.IndexOf("\r\n\r\n", bodyStart, StringComparison.Ordinal);
+                            if (headerEnd < 0 || headerEnd >= separator)
+                                throw new HttpRequestException("接口未返回有效的 HTTP 响应头。");
+                            headers = text.Substring(bodyStart, headerEnd - bodyStart);
+                            int statusStart = headers.IndexOf(' ') + 1;
+                            informational = statusStart > 0 && statusStart < headers.Length &&
+                                headers[statusStart] == '1';
+                            bodyStart = headerEnd + 4;
+                        }
+                        while (informational);
+                        var response = new HttpResponseMessage((HttpStatusCode)status)
+                        {
+                            Content = new StringContent(text.Substring(bodyStart, separator - bodyStart), Encoding.UTF8,
                                 "application/json")
                         };
+                        const string stateHeader = "X-Upstream-State:";
+                        foreach (string line in headers.Split('\n'))
+                            if (line.StartsWith(stateHeader, StringComparison.OrdinalIgnoreCase))
+                                response.Headers.TryAddWithoutValidation("X-Upstream-State",
+                                    line.Substring(stateHeader.Length).Trim());
+                        return response;
                     }
                     catch
                     {

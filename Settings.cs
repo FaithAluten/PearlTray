@@ -20,6 +20,8 @@ namespace PearlTray
         public string WalletAddress { get; set; }
         public string HashrateThresholds { get; set; }
         public string WalletThreshold { get; set; }
+        public string PriceHighThreshold { get; set; }
+        public string PriceLowThreshold { get; set; }
         public bool WindowsNotifications { get; set; }
         public bool WebhookNotifications { get; set; }
         public WebhookSettings Webhook { get; set; }
@@ -33,6 +35,8 @@ namespace PearlTray
             WalletAddress = "";
             HashrateThresholds = "0";
             WalletThreshold = "0";
+            PriceHighThreshold = "0";
+            PriceLowThreshold = "0";
             WindowsNotifications = true;
             Webhook = new WebhookSettings();
         }
@@ -41,6 +45,8 @@ namespace PearlTray
         {
             HashrateMonitor.ParseThreshold(HashrateThresholds);
             WalletMonitor.ParseThreshold(WalletThreshold);
+            PriceMonitor.ParseThreshold(PriceHighThreshold);
+            PriceMonitor.ParseThreshold(PriceLowThreshold);
             if (Webhook == null) throw new ArgumentException("Webhook 配置无效。");
             if (WebhookNotifications) Webhook.Validate();
             Uri uri;
@@ -69,6 +75,8 @@ namespace PearlTray
         public string WalletAddress { get; set; }
         public string HashrateThresholds { get; set; }
         public string WalletThreshold { get; set; }
+        public string PriceHighThreshold { get; set; }
+        public string PriceLowThreshold { get; set; }
         public bool? WindowsNotifications { get; set; }
         public bool WebhookNotifications { get; set; }
         public WebhookSettings Webhook { get; set; }
@@ -110,6 +118,8 @@ namespace PearlTray
                 WalletAddress = stored.WalletAddress ?? "",
                 HashrateThresholds = MigrateThreshold(stored.HashrateThresholds),
                 WalletThreshold = stored.WalletThreshold ?? "0",
+                PriceHighThreshold = stored.PriceHighThreshold ?? "0",
+                PriceLowThreshold = stored.PriceLowThreshold ?? "0",
                 WindowsNotifications = stored.WindowsNotifications ?? true,
                 WebhookNotifications = stored.WebhookNotifications,
                 Webhook = stored.Webhook ?? new WebhookSettings()
@@ -134,6 +144,8 @@ namespace PearlTray
                 WalletAddress = settings.WalletAddress,
                 HashrateThresholds = settings.HashrateThresholds,
                 WalletThreshold = settings.WalletThreshold,
+                PriceHighThreshold = settings.PriceHighThreshold,
+                PriceLowThreshold = settings.PriceLowThreshold,
                 WindowsNotifications = settings.WindowsNotifications,
                 WebhookNotifications = settings.WebhookNotifications,
                 Webhook = settings.Webhook.CopyWithoutPassword(),

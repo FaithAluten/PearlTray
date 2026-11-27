@@ -59,6 +59,7 @@ namespace PearlTray
         private HashrateMonitor hashrateMonitor = new HashrateMonitor();
         private WalletMonitor walletMonitor = new WalletMonitor();
         private string walletNotificationStatus = "";
+        private string priceNotificationStatus = "";
         private string notificationStatus = "";
         private readonly List<ToolStripItem> workerItems = new List<ToolStripItem>();
         private List<AccountWorker> workers;
@@ -113,7 +114,8 @@ namespace PearlTray
             : this(store, exchangeRates, accounts, webhooks, client, new WalletClient()) { }
 
         public TrayContext(SettingsStore store, ExchangeRateClient exchangeRates, AccountClient accounts,
-            WebhookClient webhooks, TickerClient client, WalletClient walletClient)
+            WebhookClient webhooks, TickerClient client, WalletClient walletClient,
+            StartupShortcut startup = null)
         {
             this.store = store;
             this.client = client;
@@ -133,10 +135,8 @@ namespace PearlTray
                 nextRateAttempt = DateTime.MinValue;
                 await RefreshAsync();
             };
-            menu.Items.Add(refreshItem);
             var configure = new TrayActionItem("设置…", "\uE713");
             configure.Click += delegate { OpenSettings(false); };
-            menu.Items.Add(configure);
             var currency = new TrayActionItem("显示单位", "\uE8AB");
             currency.DropDown = new TraySubMenu();
             currency.DropDown.OwnerItem = currency;
@@ -157,7 +157,34 @@ namespace PearlTray
             }
             currency.DropDownItems.Add(new ToolStripSeparator());
             currency.DropDownItems.Add(rateItem);
+            startup = startup ?? new StartupShortcut(
+                Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PearlTray"));
+            var startupItem = new TrayActionItem("开机自启", "\uE73E", "\uE711");
+            menu.Opening += delegate
+            {
+                startupItem.Enabled = true;
+                try { startupItem.Checked = startup.Enabled; }
+                catch (IOException) { startupItem.Enabled = false; }
+            };
+            startupItem.Click += delegate
+            {
+                try
+                {
+                    startup.Initialize();
+                    startup.SetEnabled(!startup.Enabled);
+                    startupItem.Checked = startup.Enabled;
+                }
+                catch (Exception error)
+                {
+                    MessageBox.Show("无法更改登录自启动。\n" + error.Message,
+                        "PearlTray", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            menu.Items.Add(refreshItem);
             menu.Items.Add(currency);
+            menu.Items.Add(startupItem);
+            menu.Items.Add(configure);
             menu.Items.Add(new ToolStripSeparator());
             var quit = new TrayActionItem("退出", "\uE7E8");
             quit.Click += delegate { ExitThread(); };
@@ -172,7 +199,21 @@ namespace PearlTray
             UpdateIcon();
             tray.Visible = true;
             SystemEvents.UserPreferenceChanged += ThemeChanged;
-            dispatcher.BeginInvoke(new Action(Start));
+            dispatcher.BeginInvoke(new Action(delegate
+            {
+                if (exiting) return;
+                try
+                {
+                    startup.Initialize();
+                    startupItem.Checked = startup.Enabled;
+                }
+                catch (Exception error)
+                {
+                    MessageBox.Show("无法初始化开机自启。\n" + error.Message,
+                        "PearlTray", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                Start();
+            }));
         }
 
         private void Start()
@@ -232,6 +273,7 @@ namespace PearlTray
             settings = value;
             notificationStatus = "";
             walletNotificationStatus = "";
+            priceNotificationStatus = "";
             workers = null;
             walletBalance = null;
             walletStatus = "";
@@ -464,9 +506,11 @@ namespace PearlTray
 
         private async Task RefreshPriceAsync(AppSettings snapshot, int generation, CancellationToken cancellation)
         {
+            TickerResult result = null;
+            priceNotificationStatus = "";
             try
             {
-                TickerResult result = await client.FetchAsync(snapshot, cancellation);
+                result = await client.FetchAsync(snapshot, cancellation);
                 if (exiting || generation != revision) return;
                 lastPrice = result.Last;
                 warning = result.IsStale;
@@ -487,7 +531,24 @@ namespace PearlTray
                 else
                     status = "获取价格失败，将在下个周期重试";
             }
-            if (!exiting && generation == revision) UpdateIcon();
+            if (exiting || generation != revision || cancellation.IsCancellationRequested) return;
+            UpdateIcon();
+            if (result == null || result.IsStale) return;
+            string message = PriceMonitor.Evaluate(snapshot, result.Last);
+            if (message == null) return;
+            if (snapshot.WindowsNotifications)
+            {
+                try { tray.ShowBalloonTip(10000, PriceMonitor.Title, message, ToolTipIcon.Info); }
+                catch { priceNotificationStatus = "价格 Windows 系统通知发送失败"; }
+            }
+            if (!snapshot.WebhookNotifications) return;
+            try { await webhooks.SendAsync(snapshot.Webhook, PriceMonitor.Title, message, cancellation); }
+            catch
+            {
+                if (exiting || generation != revision || cancellation.IsCancellationRequested) return;
+                priceNotificationStatus = String.IsNullOrEmpty(priceNotificationStatus)
+                    ? "价格 Webhook 通知发送失败" : "价格通知发送失败";
+            }
         }
 
         private void UpdateIcon()
@@ -570,6 +631,8 @@ namespace PearlTray
                 workerRows.Add(new ToolStripMenuItem(notificationStatus) { Enabled = false, AutoToolTip = false });
             if (!String.IsNullOrEmpty(walletNotificationStatus))
                 workerRows.Add(new ToolStripMenuItem(walletNotificationStatus) { Enabled = false, AutoToolTip = false });
+            if (!String.IsNullOrEmpty(priceNotificationStatus))
+                workerRows.Add(new ToolStripMenuItem(priceNotificationStatus) { Enabled = false, AutoToolTip = false });
             if (settingsForm != null)
                 settingsForm.UpdateHashrates(workers, workerStatus);
             foreach (var item in workerRows)

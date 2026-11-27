@@ -16,6 +16,8 @@ namespace PearlTray
         private readonly AppSettings currentSettings;
         private readonly TextBox thresholds;
         private readonly TextBox walletThreshold;
+        private readonly TextBox priceHighThreshold;
+        private readonly TextBox priceLowThreshold;
         private readonly CheckBox windowsNotifications;
         private readonly CheckBox webhookNotifications;
         private readonly Label totals;
@@ -41,6 +43,13 @@ namespace PearlTray
 
             AddSection("行情与汇率", "\uE774");
             exchangeRateUrl = AddTextField("USDT/CNY 汇率接口 URL", current.ExchangeRateUrl, false);
+
+            AddSection("价格提醒", "\uE7F4");
+            priceHighThreshold = AddTextField("价格 ≥ 此值（USDT）", current.PriceHighThreshold, false);
+            priceLowThreshold = AddTextField("价格 ≤ 此值（USDT）", current.PriceLowThreshold, false);
+            var priceHint = FieldLabel("填 0 关闭该项。价格持续满足条件时，每次刷新都会通知，请谨慎开启。");
+            priceHint.Tag = "muted";
+            Fields.Controls.Add(priceHint);
 
             AddSection("矿机监控", "\uE950");
             walletAddress = AddTextField("钱包地址（可选）", current.WalletAddress, false);
@@ -158,6 +167,8 @@ namespace PearlTray
                 WalletAddress = walletAddress.Text.Trim(),
                 HashrateThresholds = thresholds.Text.Trim(),
                 WalletThreshold = walletThreshold.Text.Trim(),
+                PriceHighThreshold = priceHighThreshold.Text.Trim(),
+                PriceLowThreshold = priceLowThreshold.Text.Trim(),
                 WindowsNotifications = windowsNotifications.Checked,
                 WebhookNotifications = webhookNotifications.Checked,
                 Webhook = webhook
